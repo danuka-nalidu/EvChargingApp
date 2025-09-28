@@ -20,6 +20,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.evcharging.database.UserDatabaseHelper
 import com.example.evcharging.ui.theme.EvChargingTheme
 
 class OperatorLoginActivity : ComponentActivity() {
@@ -29,10 +30,22 @@ class OperatorLoginActivity : ComponentActivity() {
         setContent {
             EvChargingTheme {
                 OperatorLoginScreen(
-                    onLoginClick = { 
-                        // Navigate to Operator Dashboard
-                        startActivity(Intent(this, OperatorDashboardActivity::class.java))
-                        finish()
+                    onLoginClick = { operatorId, password ->
+                        try {
+                            val dbHelper = UserDatabaseHelper(this)
+                            val isAuthenticated = dbHelper.authenticateOperator(operatorId, password)
+                            
+                            if (isAuthenticated) {
+                                // Login successful, navigate to dashboard
+                                startActivity(Intent(this, OperatorDashboardActivity::class.java))
+                                finish()
+                            } else {
+                                // Login failed - this will be handled in the UI
+                            }
+                        } catch (e: Exception) {
+                            // Handle any database errors
+                            // This will be handled in the UI
+                        }
                     },
                     onForgotPasswordClick = { /* Handle forgot password */ },
                     onBackClick = {
@@ -48,7 +61,7 @@ class OperatorLoginActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun OperatorLoginScreen(
-    onLoginClick: () -> Unit,
+    onLoginClick: (String, String) -> Unit,
     onForgotPasswordClick: () -> Unit,
     onBackClick: () -> Unit
 ) {
@@ -56,6 +69,7 @@ fun OperatorLoginScreen(
     var password by remember { mutableStateOf("") }
     var loginError by remember { mutableStateOf("") }
     var isFormValid by remember { mutableStateOf(false) }
+    var isLoggingIn by remember { mutableStateOf(false) }
 
     // Form validation
     LaunchedEffect(operatorId, password) {
@@ -161,17 +175,23 @@ fun OperatorLoginScreen(
         )
 
         Button(
-            onClick = onLoginClick,
+            onClick = {
+                if (isFormValid && !isLoggingIn) {
+                    isLoggingIn = true
+                    loginError = ""
+                    onLoginClick(operatorId, password)
+                }
+            },
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(bottom = 16.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = Color(0xFF2196F3)
             ),
-            enabled = isFormValid
+            enabled = isFormValid && !isLoggingIn
         ) {
             Text(
-                text = "Log In as Operator",
+                text = if (isLoggingIn) "Logging In..." else "Log In as Operator",
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Medium
             )
@@ -243,7 +263,7 @@ fun OperatorLoginScreen(
 fun OperatorLoginScreenPreview() {
     EvChargingTheme {
         OperatorLoginScreen(
-            onLoginClick = {},
+            onLoginClick = {} as (String, String) -> Unit,
             onForgotPasswordClick = {},
             onBackClick = {}
         )

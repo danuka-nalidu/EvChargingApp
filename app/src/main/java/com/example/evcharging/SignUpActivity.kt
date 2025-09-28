@@ -20,6 +20,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.evcharging.database.UserDatabaseHelper
 import com.example.evcharging.ui.theme.EvChargingTheme
 
 class SignUpActivity : ComponentActivity() {
@@ -29,11 +30,24 @@ class SignUpActivity : ComponentActivity() {
         setContent {
             EvChargingTheme {
                 SignUpScreen(
-                    onSignUpClick = { 
-                        // For demo purposes, navigate to dashboard
-                        // In real app, create account and validate first
-                        startActivity(Intent(this, EVOwnerDashboardActivity::class.java))
-                        finish()
+                    onSignUpClick = { nic, fullName, email, password, callback ->
+                        try {
+                            val dbHelper = UserDatabaseHelper(this)
+                            val success = dbHelper.createEVOwner(nic, fullName, email, password)
+                            
+                            if (success) {
+                                // Registration successful, navigate to dashboard
+                                startActivity(Intent(this, EVOwnerDashboardActivity::class.java))
+                                finish()
+                                callback(true, null)
+                            } else {
+                                // Registration failed - show error message
+                                callback(false, "Registration failed. NIC or email may already exist.")
+                            }
+                        } catch (e: Exception) {
+                            // Handle any database errors
+                            callback(false, "Database error: ${e.message}")
+                        }
                     },
                     onLoginClick = { 
                         startActivity(Intent(this, EVOwnerLoginActivity::class.java))
@@ -48,7 +62,7 @@ class SignUpActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SignUpScreen(
-    onSignUpClick: () -> Unit,
+    onSignUpClick: (String, String, String, String, (Boolean, String?) -> Unit) -> Unit,
     onLoginClick: () -> Unit
 ) {
     var nic by remember { mutableStateOf("") }
@@ -63,6 +77,10 @@ fun SignUpScreen(
     var passwordError by remember { mutableStateOf("") }
     var confirmPasswordError by remember { mutableStateOf("") }
     var isFormValid by remember { mutableStateOf(false) }
+    
+    // Registration states
+    var registrationError by remember { mutableStateOf("") }
+    var isRegistering by remember { mutableStateOf(false) }
     
     // Validation functions
     fun validateNIC(nic: String): String {
@@ -191,19 +209,51 @@ fun SignUpScreen(
             singleLine = true
         )
         
+        // Registration Error Display
+        if (registrationError.isNotEmpty()) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color(0xFFFFEBEE)
+                )
+            ) {
+                Text(
+                    text = registrationError,
+                    fontSize = 14.sp,
+                    color = Color(0xFFD32F2F),
+                    modifier = Modifier.padding(12.dp)
+                )
+            }
+        }
+        
         // Sign Up Button
         Button(
-            onClick = onSignUpClick,
+            onClick = {
+                if (isFormValid && !isRegistering) {
+                    isRegistering = true
+                    registrationError = ""
+                    onSignUpClick(nic, fullName, email, password) { success, errorMessage ->
+                        isRegistering = false
+                        if (success) {
+                            // Success will be handled by navigation in the activity
+                        } else {
+                            registrationError = errorMessage ?: "Registration failed. Please try again."
+                        }
+                    }
+                }
+            },
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(bottom = 16.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = Color(0xFF4CAF50) // Green color
             ),
-            enabled = isFormValid
+            enabled = isFormValid && !isRegistering
         ) {
             Text(
-                text = "Sign Up",
+                text = if (isRegistering) "Creating Account..." else "Sign Up",
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Medium
             )

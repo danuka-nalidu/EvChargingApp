@@ -20,6 +20,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.evcharging.database.UserDatabaseHelper
 import com.example.evcharging.ui.theme.EvChargingTheme
 
 class EVOwnerLoginActivity : ComponentActivity() {
@@ -29,10 +30,22 @@ class EVOwnerLoginActivity : ComponentActivity() {
         setContent {
             EvChargingTheme {
                 EVOwnerLoginScreen(
-                    onLoginClick = { 
-                        // Navigate to EV Owner Dashboard
-                        startActivity(Intent(this, EVOwnerDashboardActivity::class.java))
-                        finish()
+                    onLoginClick = { nicOrEmail, password ->
+                        try {
+                            val dbHelper = UserDatabaseHelper(this)
+                            val isAuthenticated = dbHelper.authenticateEVOwner(nicOrEmail, password)
+                            
+                            if (isAuthenticated) {
+                                // Login successful, navigate to dashboard
+                                startActivity(Intent(this, EVOwnerDashboardActivity::class.java))
+                                finish()
+                            } else {
+                                // Login failed - this will be handled in the UI
+                            }
+                        } catch (e: Exception) {
+                            // Handle any database errors
+                            // This will be handled in the UI
+                        }
                     },
                     onForgotPasswordClick = { /* Handle forgot password */ },
                     onSignUpClick = { 
@@ -51,7 +64,7 @@ class EVOwnerLoginActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EVOwnerLoginScreen(
-    onLoginClick: () -> Unit,
+    onLoginClick: (String, String) -> Unit,
     onForgotPasswordClick: () -> Unit,
     onSignUpClick: () -> Unit,
     onBackClick: () -> Unit
@@ -60,6 +73,7 @@ fun EVOwnerLoginScreen(
     var password by remember { mutableStateOf("") }
     var loginError by remember { mutableStateOf("") }
     var isFormValid by remember { mutableStateOf(false) }
+    var isLoggingIn by remember { mutableStateOf(false) }
 
     // Form validation
     LaunchedEffect(nicOrEmail, password) {
@@ -165,17 +179,23 @@ fun EVOwnerLoginScreen(
         )
 
         Button(
-            onClick = onLoginClick,
+            onClick = {
+                if (isFormValid && !isLoggingIn) {
+                    isLoggingIn = true
+                    loginError = ""
+                    onLoginClick(nicOrEmail, password)
+                }
+            },
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(bottom = 16.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = Color(0xFF4CAF50)
             ),
-            enabled = isFormValid
+            enabled = isFormValid && !isLoggingIn
         ) {
             Text(
-                text = "Log In as EV Owner",
+                text = if (isLoggingIn) "Logging In..." else "Log In as EV Owner",
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Medium
             )
@@ -239,7 +259,7 @@ fun EVOwnerLoginScreen(
 fun EVOwnerLoginScreenPreview() {
     EvChargingTheme {
         EVOwnerLoginScreen(
-            onLoginClick = {},
+            onLoginClick = {} as (String, String) -> Unit,
             onForgotPasswordClick = {},
             onSignUpClick = {},
             onBackClick = {}
