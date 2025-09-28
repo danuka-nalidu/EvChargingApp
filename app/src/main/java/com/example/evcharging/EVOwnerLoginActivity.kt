@@ -30,21 +30,26 @@ class EVOwnerLoginActivity : ComponentActivity() {
         setContent {
             EvChargingTheme {
                 EVOwnerLoginScreen(
-                    onLoginClick = { nicOrEmail, password ->
+                    onLoginClick = { nicOrEmail, password, callback ->
                         try {
                             val dbHelper = UserDatabaseHelper(this)
                             val isAuthenticated = dbHelper.authenticateEVOwner(nicOrEmail, password)
                             
                             if (isAuthenticated) {
-                                // Login successful, navigate to dashboard
-                                startActivity(Intent(this, EVOwnerDashboardActivity::class.java))
-                                finish()
+                                // Login successful
+                                callback(true, "Login successful! Welcome back.")
+                                // Navigate to dashboard after a short delay to show success message
+                                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                                    startActivity(Intent(this, EVOwnerDashboardActivity::class.java))
+                                    finish()
+                                }, 1500)
                             } else {
-                                // Login failed - this will be handled in the UI
+                                // Login failed
+                                callback(false, "Login unsuccessful. Please check your credentials and try again.")
                             }
                         } catch (e: Exception) {
                             // Handle any database errors
-                            // This will be handled in the UI
+                            callback(false, "Database error: ${e.message}")
                         }
                     },
                     onForgotPasswordClick = { /* Handle forgot password */ },
@@ -64,7 +69,7 @@ class EVOwnerLoginActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EVOwnerLoginScreen(
-    onLoginClick: (String, String) -> Unit,
+    onLoginClick: (String, String, (Boolean, String?) -> Unit) -> Unit,
     onForgotPasswordClick: () -> Unit,
     onSignUpClick: () -> Unit,
     onBackClick: () -> Unit
@@ -72,6 +77,7 @@ fun EVOwnerLoginScreen(
     var nicOrEmail by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var loginError by remember { mutableStateOf("") }
+    var loginSuccess by remember { mutableStateOf("") }
     var isFormValid by remember { mutableStateOf(false) }
     var isLoggingIn by remember { mutableStateOf(false) }
 
@@ -79,6 +85,7 @@ fun EVOwnerLoginScreen(
     LaunchedEffect(nicOrEmail, password) {
         isFormValid = nicOrEmail.isNotEmpty() && password.isNotEmpty()
         loginError = ""
+        loginSuccess = ""
     }
 
     Column(
@@ -135,6 +142,26 @@ fun EVOwnerLoginScreen(
             modifier = Modifier.padding(bottom = 32.dp)
         )
 
+        // Success Message
+        if (loginSuccess.isNotEmpty()) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color(0xFFE8F5E8)
+                )
+            ) {
+                Text(
+                    text = loginSuccess,
+                    fontSize = 14.sp,
+                    color = Color(0xFF2E7D32),
+                    modifier = Modifier.padding(12.dp)
+                )
+            }
+        }
+
+        // Error Message
         if (loginError.isNotEmpty()) {
             Card(
                 modifier = Modifier
@@ -183,7 +210,15 @@ fun EVOwnerLoginScreen(
                 if (isFormValid && !isLoggingIn) {
                     isLoggingIn = true
                     loginError = ""
-                    onLoginClick(nicOrEmail, password)
+                    loginSuccess = ""
+                    onLoginClick(nicOrEmail, password) { success, message ->
+                        isLoggingIn = false
+                        if (success) {
+                            loginSuccess = message ?: "Login successful!"
+                        } else {
+                            loginError = message ?: "Login failed. Please try again."
+                        }
+                    }
                 }
             },
             modifier = Modifier
@@ -259,7 +294,7 @@ fun EVOwnerLoginScreen(
 fun EVOwnerLoginScreenPreview() {
     EvChargingTheme {
         EVOwnerLoginScreen(
-            onLoginClick = {} as (String, String) -> Unit,
+            onLoginClick = { _, _, _ -> },
             onForgotPasswordClick = {},
             onSignUpClick = {},
             onBackClick = {}
