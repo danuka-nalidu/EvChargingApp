@@ -21,12 +21,21 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.evcharging.repository.UserRepository
+import com.example.evcharging.session.UserSession
 import com.example.evcharging.ui.theme.EvChargingTheme
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class ViewBookingsActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        
+        // Initialize user session
+        UserSession.initialize(this)
+        
         setContent {
             EvChargingTheme {
                 ViewBookingsScreen(
@@ -58,19 +67,49 @@ fun ViewBookingsScreen(
     onQRCodeClick: (String) -> Unit
 ) {
     var selectedTab by remember { mutableStateOf(0) }
+    var bookings by remember { mutableStateOf<List<Booking>>(emptyList()) }
+    var isLoading by remember { mutableStateOf(true) }
+    var errorMessage by remember { mutableStateOf("") }
     
-    // Sample data - in real app, this would come from a data source
-    val upcomingBookings = listOf(
-        Booking("1", "Station A - Colombo", "15/12/2024", "10:00 - 12:00", "Approved", true),
-        Booking("2", "Station B - Kandy", "16/12/2024", "14:00 - 16:00", "Pending", true),
-        Booking("3", "Station C - Galle", "17/12/2024", "08:00 - 10:00", "Approved", true)
-    )
+    // Fetch bookings from API
+    LaunchedEffect(Unit) {
+        val userInfo = UserSession.getUserInfo()
+        if (userInfo != null) {
+            val repository = UserRepository()
+            CoroutineScope(Dispatchers.Main).launch {
+                try {
+                    val result = repository.getBookingsByOwner(userInfo.nic)
+                    if (result.isSuccess) {
+                        val apiBookings = result.getOrNull() ?: emptyList()
+                        bookings = apiBookings.map { apiBooking ->
+                            Booking(
+                                id = apiBooking.id,
+                                stationName = apiBooking.getStationDisplayName(),
+                                date = apiBooking.getFormattedDate(),
+                                time = apiBooking.getFormattedTime(),
+                                status = apiBooking.status,
+                                isUpcoming = apiBooking.isUpcoming()
+                            )
+                        }
+                        errorMessage = ""
+                    } else {
+                        val exception = result.exceptionOrNull()
+                        errorMessage = exception?.message ?: "Failed to load bookings"
+                    }
+                } catch (e: Exception) {
+                    errorMessage = "Error loading bookings: ${e.message}"
+                }
+                isLoading = false
+            }
+        } else {
+            errorMessage = "User not logged in"
+            isLoading = false
+        }
+    }
     
-    val pastBookings = listOf(
-        Booking("4", "Station A - Colombo", "10/12/2024", "10:00 - 12:00", "Completed", false),
-        Booking("5", "Station B - Kandy", "08/12/2024", "14:00 - 16:00", "Completed", false),
-        Booking("6", "Station D - Negombo", "05/12/2024", "16:00 - 18:00", "Cancelled", false)
-    )
+    // Separate upcoming and past bookings
+    val upcomingBookings = bookings.filter { it.isUpcoming }
+    val pastBookings = bookings.filter { !it.isUpcoming }
 
     Column(
         modifier = Modifier
@@ -111,8 +150,48 @@ fun ViewBookingsScreen(
         Spacer(modifier = Modifier.height(16.dp))
         
         // Content based on selected tab
-        when (selectedTab) {
-            0 -> {
+        when {
+            isLoading -> {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        CircularProgressIndicator(
+                            color = Color(0xFF4CAF50)
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = "Loading bookings...",
+                            color = Color.Gray
+                        )
+                    }
+                }
+            }
+            errorMessage.isNotEmpty() -> {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = "⚠️",
+                            fontSize = 48.sp
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = errorMessage,
+                            color = Color.Red,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+            }
+            selectedTab == 0 -> {
                 if (upcomingBookings.isEmpty()) {
                     EmptyStateMessage("No upcoming bookings")
                 } else {
@@ -123,14 +202,14 @@ fun ViewBookingsScreen(
                         items(upcomingBookings) { booking ->
                             BookingCard(
                                 booking = booking,
-                                showQRButton = booking.status == "Approved",
+                                showQRButton = booking.status == "APPROVED",
                                 onQRCodeClick = onQRCodeClick
                             )
                         }
                     }
                 }
             }
-            1 -> {
+            selectedTab == 1 -> {
                 if (pastBookings.isEmpty()) {
                     EmptyStateMessage("No past bookings")
                 } else {

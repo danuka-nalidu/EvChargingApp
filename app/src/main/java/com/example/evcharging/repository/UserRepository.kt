@@ -135,4 +135,32 @@ class UserRepository {
             Result.failure(e)
         }
     }
+    
+    suspend fun getBookingsByOwner(nic: String, skip: Int = 0, take: Int = 50): Result<List<com.example.evcharging.network.models.BookingResponse>> = withContext(Dispatchers.IO) {
+        try {
+            Log.d("UserRepository", "Fetching bookings for NIC: $nic")
+            
+            val response = apiService.getBookingsByOwner(nic, skip, take)
+            Log.d("UserRepository", "Bookings API response code: ${response.code()}")
+            Log.d("UserRepository", "Bookings API response body: ${response.body()}")
+            
+            if (response.isSuccessful) {
+                val bookings = response.body()
+                if (bookings != null) {
+                    Log.d("UserRepository", "Successfully fetched ${bookings.size} bookings")
+                    Result.success(bookings)
+                } else {
+                    Log.w("UserRepository", "Bookings API returned null response")
+                    Result.success(emptyList())
+                }
+            } else {
+                Log.e("UserRepository", "Bookings API error: ${response.code()} - ${response.message()}")
+                Result.failure(Exception("API error: ${response.code()} - ${response.message()}"))
+            }
+        } catch (e: Exception) {
+            Log.e("UserRepository", "Exception during bookings fetch: ${e.message}", e)
+            Log.e("UserRepository", "Exception type: ${e.javaClass.simpleName}")
+            Result.failure(e)
+        }
+    }
 }
