@@ -21,7 +21,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.evcharging.database.UserDatabaseHelper
+import com.example.evcharging.repository.UserRepository
 import com.example.evcharging.ui.theme.EvChargingTheme
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class SignUpActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -30,23 +34,27 @@ class SignUpActivity : ComponentActivity() {
         setContent {
             EvChargingTheme {
                 SignUpScreen(
-                    onSignUpClick = { nic, fullName, email, password, callback ->
-                        try {
-                            val dbHelper = UserDatabaseHelper(this)
-                            val success = dbHelper.createEVOwner(nic, fullName, email, password)
-                            
-                            if (success) {
-                                // Registration successful, navigate to dashboard
-                                startActivity(Intent(this, EVOwnerDashboardActivity::class.java))
-                                finish()
-                                callback(true, null)
-                            } else {
-                                // Registration failed - show error message
-                                callback(false, "Registration failed. NIC or email may already exist.")
+                    onSignUpClick = { nic, fullName, email, phone, password, callback ->
+                        val dbHelper = UserDatabaseHelper(this)
+                        val repository = UserRepository()
+                        
+                        CoroutineScope(Dispatchers.Main).launch {
+                            try {
+                                val result = repository.registerEVOwner(nic, fullName, email, phone, password, dbHelper)
+                                
+                                if (result.isSuccess) {
+                                    // Registration successful, navigate to login page
+                                    startActivity(Intent(this@SignUpActivity, EVOwnerLoginActivity::class.java))
+                                    finish()
+                                    callback(true, result.getOrNull())
+                                } else {
+                                    // Registration failed - show error message
+                                    callback(false, result.exceptionOrNull()?.message ?: "Registration failed")
+                                }
+                            } catch (e: Exception) {
+                                // Handle any errors
+                                callback(false, "Registration error: ${e.message}")
                             }
-                        } catch (e: Exception) {
-                            // Handle any database errors
-                            callback(false, "Database error: ${e.message}")
                         }
                     },
                     onLoginClick = { 
@@ -62,18 +70,20 @@ class SignUpActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SignUpScreen(
-    onSignUpClick: (String, String, String, String, (Boolean, String?) -> Unit) -> Unit,
+    onSignUpClick: (String, String, String, String, String, (Boolean, String?) -> Unit) -> Unit,
     onLoginClick: () -> Unit
 ) {
     var nic by remember { mutableStateOf("") }
     var fullName by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
+    var phone by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var confirmPassword by remember { mutableStateOf("") }
     
     // Validation states
     var nicError by remember { mutableStateOf("") }
     var emailError by remember { mutableStateOf("") }
+    var phoneError by remember { mutableStateOf("") }
     var passwordError by remember { mutableStateOf("") }
     var confirmPasswordError by remember { mutableStateOf("") }
     var isFormValid by remember { mutableStateOf(false) }
@@ -99,6 +109,14 @@ fun SignUpScreen(
         }
     }
     
+    fun validatePhone(phone: String): String {
+        return when {
+            phone.isEmpty() -> "Phone number is required"
+            !phone.matches(Regex("^\\+?[0-9]{10,15}$")) -> "Invalid phone number format"
+            else -> ""
+        }
+    }
+    
     fun validatePassword(password: String): String {
         return when {
             password.isEmpty() -> "Password is required"
@@ -116,15 +134,16 @@ fun SignUpScreen(
     }
     
     // Real-time validation
-    LaunchedEffect(nic, email, password, confirmPassword) {
+    LaunchedEffect(nic, email, phone, password, confirmPassword) {
         nicError = validateNIC(nic)
         emailError = validateEmail(email)
+        phoneError = validatePhone(phone)
         passwordError = validatePassword(password)
         confirmPasswordError = validateConfirmPassword(password, confirmPassword)
         
-        isFormValid = nicError.isEmpty() && emailError.isEmpty() && 
+        isFormValid = nicError.isEmpty() && emailError.isEmpty() && phoneError.isEmpty() &&
                      passwordError.isEmpty() && confirmPasswordError.isEmpty() &&
-                     nic.isNotEmpty() && email.isNotEmpty() && 
+                     nic.isNotEmpty() && email.isNotEmpty() && phone.isNotEmpty() &&
                      password.isNotEmpty() && confirmPassword.isNotEmpty()
     }
 
@@ -171,6 +190,21 @@ fun SignUpScreen(
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
             isError = emailError.isNotEmpty(),
             supportingText = if (emailError.isNotEmpty()) { { Text(emailError) } } else null,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 8.dp),
+            singleLine = true
+        )
+        
+        // Phone Field
+        OutlinedTextField(
+            value = phone,
+            onValueChange = { phone = it },
+            label = { Text("Phone Number") },
+            placeholder = { Text("Enter your phone number") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+            isError = phoneError.isNotEmpty(),
+            supportingText = if (phoneError.isNotEmpty()) { { Text(phoneError) } } else null,
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(bottom = 8.dp),
@@ -234,7 +268,7 @@ fun SignUpScreen(
                 if (isFormValid && !isRegistering) {
                     isRegistering = true
                     registrationError = ""
-                    onSignUpClick(nic, fullName, email, password) { success, errorMessage ->
+                    onSignUpClick(nic, fullName, email, phone, password) { success, errorMessage ->
                         isRegistering = false
                         if (success) {
                             // Success will be handled by navigation in the activity
@@ -269,7 +303,7 @@ fun SignUpScreen(
             )
         ) {
             Text(
-                text = "💾 Ready for SQLite integration:\n• NIC uniqueness validation\n• Account creation/updates\n• User data persistence",
+                text = "💾 Integrated with Backend:\n• SQLite local storage\n• MongoDB cloud storage\n• Real-time API synchronization",
                 fontSize = 12.sp,
                 color = Color(0xFF1976D2),
                 modifier = Modifier.padding(12.dp),

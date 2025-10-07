@@ -4,18 +4,20 @@ import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import android.util.Log
 
 class UserDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null, DATABASE_VERSION) {
 
     companion object {
-        private const val DATABASE_NAME = "EVChargingDB"
-        private const val DATABASE_VERSION = 1
+        private const val DATABASE_NAME = "ev_charging.db"
+        private const val DATABASE_VERSION = 2
 
         // EV Owners Table
         private const val TABLE_EV_OWNERS = "ev_owners"
         private const val COLUMN_NIC = "nic"
         private const val COLUMN_FULL_NAME = "full_name"
         private const val COLUMN_EMAIL = "email"
+        private const val COLUMN_PHONE = "phone"
         private const val COLUMN_PASSWORD = "password"
         private const val COLUMN_IS_ACTIVE = "is_active"
         private const val COLUMN_CREATED_AT = "created_at"
@@ -49,6 +51,7 @@ class UserDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_
                 $COLUMN_NIC TEXT PRIMARY KEY,
                 $COLUMN_FULL_NAME TEXT NOT NULL,
                 $COLUMN_EMAIL TEXT UNIQUE NOT NULL,
+                $COLUMN_PHONE TEXT NOT NULL,
                 $COLUMN_PASSWORD TEXT NOT NULL,
                 $COLUMN_IS_ACTIVE INTEGER DEFAULT 1,
                 $COLUMN_CREATED_AT DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -92,10 +95,37 @@ class UserDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        db.execSQL("DROP TABLE IF EXISTS $TABLE_RESERVATIONS")
-        db.execSQL("DROP TABLE IF EXISTS $TABLE_OPERATORS")
-        db.execSQL("DROP TABLE IF EXISTS $TABLE_EV_OWNERS")
-        onCreate(db)
+        Log.d("UserDatabaseHelper", "Upgrading database from version $oldVersion to $newVersion")
+        
+        when (oldVersion) {
+            1 -> {
+                try {
+                    // Add phone column to ev_owners table
+                    db.execSQL("ALTER TABLE $TABLE_EV_OWNERS ADD COLUMN $COLUMN_PHONE TEXT")
+                    Log.d("UserDatabaseHelper", "Successfully added phone column")
+                } catch (e: Exception) {
+                    Log.e("UserDatabaseHelper", "Failed to add phone column: ${e.message}")
+                    // If adding column fails, recreate the table
+                    recreateTables(db)
+                }
+            }
+            else -> {
+                Log.d("UserDatabaseHelper", "Recreating all tables")
+                recreateTables(db)
+            }
+        }
+    }
+    
+    private fun recreateTables(db: SQLiteDatabase) {
+        try {
+            db.execSQL("DROP TABLE IF EXISTS $TABLE_RESERVATIONS")
+            db.execSQL("DROP TABLE IF EXISTS $TABLE_OPERATORS")
+            db.execSQL("DROP TABLE IF EXISTS $TABLE_EV_OWNERS")
+            onCreate(db)
+            Log.d("UserDatabaseHelper", "Successfully recreated all tables")
+        } catch (e: Exception) {
+            Log.e("UserDatabaseHelper", "Failed to recreate tables: ${e.message}", e)
+        }
     }
 
     private fun insertSampleData(db: SQLiteDatabase) {
@@ -104,6 +134,7 @@ class UserDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_
             put(COLUMN_NIC, "123456789V")
             put(COLUMN_FULL_NAME, "John Doe")
             put(COLUMN_EMAIL, "john.doe@example.com")
+            put(COLUMN_PHONE, "+94771234567")
             put(COLUMN_PASSWORD, "password123")
             put(COLUMN_IS_ACTIVE, 1)
         }
@@ -144,16 +175,139 @@ class UserDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_
     }
 
     // EV Owner methods
-    fun createEVOwner(nic: String, fullName: String, email: String, password: String): Boolean {
+    fun createEVOwner(nic: String, fullName: String, email: String, phone: String, password: String): Boolean {
         val db = writableDatabase
-        val values = ContentValues().apply {
-            put(COLUMN_NIC, nic)
-            put(COLUMN_FULL_NAME, fullName)
-            put(COLUMN_EMAIL, email)
-            put(COLUMN_PASSWORD, password)
-            put(COLUMN_IS_ACTIVE, 1)
+        
+        try {
+            // Check if phone column exists
+            if (!columnExists(db, TABLE_EV_OWNERS, COLUMN_PHONE)) {
+                Log.e("UserDatabaseHelper", "Phone column does not exist, adding it...")
+                db.execSQL("ALTER TABLE $TABLE_EV_OWNERS ADD COLUMN $COLUMN_PHONE TEXT")
+            }
+            
+            val values = ContentValues().apply {
+                put(COLUMN_NIC, nic)
+                put(COLUMN_FULL_NAME, fullName)
+                put(COLUMN_EMAIL, email)
+                put(COLUMN_PHONE, phone)
+                put(COLUMN_PASSWORD, password)
+                put(COLUMN_IS_ACTIVE, 1)
+            }
+            
+            Log.d("UserDatabaseHelper", "Creating EV Owner with data: NIC=$nic, Name=$fullName, Email=$email, Phone=$phone")
+            val result = db.insert(TABLE_EV_OWNERS, null, values)
+            val success = result != -1L
+            Log.d("UserDatabaseHelper", "Insert result: $result, Success: $success")
+            
+            if (!success) {
+                Log.e("UserDatabaseHelper", "Insert failed with result: $result")
+            }
+            
+            return success
+        } catch (e: Exception) {
+            Log.e("UserDatabaseHelper", "Exception during createEVOwner: ${e.message}", e)
+            return false
         }
-        return db.insert(TABLE_EV_OWNERS, null, values) != -1L
+    }
+    
+    private fun columnExists(db: SQLiteDatabase, tableName: String, columnName: String): Boolean {
+        val cursor = db.rawQuery("PRAGMA table_info($tableName)", null)
+        var exists = false
+        
+        while (cursor.moveToNext()) {
+            val name = cursor.getString(cursor.getColumnIndexOrThrow("name"))
+            if (name == columnName) {
+                exists = true
+                break
+            }
+        }
+        cursor.close()
+        return exists
+    }
+    
+    fun checkTableSchema(): String {
+        val db = readableDatabase
+        val cursor = db.rawQuery("PRAGMA table_info($TABLE_EV_OWNERS)", null)
+        val columns = mutableListOf<String>()
+        
+        while (cursor.moveToNext()) {
+            val columnName = cursor.getString(cursor.getColumnIndexOrThrow("name"))
+            val columnType = cursor.getString(cursor.getColumnIndexOrThrow("type"))
+            columns.add("$columnName: $columnType")
+        }
+        cursor.close()
+        
+        val schema = columns.joinToString(", ")
+        Log.d("UserDatabaseHelper", "Table schema: $schema")
+        return schema
+    }
+    
+    fun forceRecreateDatabase(): Boolean {
+        return try {
+            val db = writableDatabase
+            recreateTables(db)
+            true
+        } catch (e: Exception) {
+            Log.e("UserDatabaseHelper", "Failed to force recreate database: ${e.message}", e)
+            false
+        }
+    }
+    
+    fun resetDatabase(): Boolean {
+        return try {
+            val db = writableDatabase
+            db.execSQL("DROP TABLE IF EXISTS $TABLE_RESERVATIONS")
+            db.execSQL("DROP TABLE IF EXISTS $TABLE_OPERATORS")
+            db.execSQL("DROP TABLE IF EXISTS $TABLE_EV_OWNERS")
+            onCreate(db)
+            Log.d("UserDatabaseHelper", "Database completely reset")
+            true
+        } catch (e: Exception) {
+            Log.e("UserDatabaseHelper", "Failed to reset database: ${e.message}", e)
+            false
+        }
+    }
+    
+    fun getDatabaseInfo(): String {
+        val db = readableDatabase
+        val path = db.path
+        val version = db.version
+        val isOpen = db.isOpen
+        Log.d("UserDatabaseHelper", "Database path: $path, Version: $version, IsOpen: $isOpen")
+        return "Path: $path, Version: $version, IsOpen: $isOpen"
+    }
+    
+    fun testDatabaseConnection(): Boolean {
+        return try {
+            val db = readableDatabase
+            val cursor = db.rawQuery("SELECT 1", null)
+            val result = cursor.moveToFirst()
+            cursor.close()
+            Log.d("UserDatabaseHelper", "Database connection test: $result")
+            result
+        } catch (e: Exception) {
+            Log.e("UserDatabaseHelper", "Database connection test failed: ${e.message}", e)
+            false
+        }
+    }
+    
+    fun checkDatabaseFile(): String {
+        return try {
+            val db = readableDatabase
+            val file = java.io.File(db.path)
+            val exists = file.exists()
+            val readable = file.canRead()
+            val writable = file.canWrite()
+            val size = if (exists) file.length() else 0
+            
+            val info = "File exists: $exists, Readable: $readable, Writable: $writable, Size: $size bytes, Path: ${db.path}"
+            Log.d("UserDatabaseHelper", "Database file info: $info")
+            info
+        } catch (e: Exception) {
+            val error = "Error checking database file: ${e.message}"
+            Log.e("UserDatabaseHelper", error, e)
+            error
+        }
     }
 
     fun authenticateEVOwner(nicOrEmail: String, password: String): Boolean {
