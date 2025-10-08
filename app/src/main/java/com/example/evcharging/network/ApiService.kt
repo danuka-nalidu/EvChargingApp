@@ -90,6 +90,11 @@ interface ApiService {
         @Body request: UpdateBookingRequest
     ): Response<ApiResponse<Any>>
 
+    @POST("api/owners/{nic}/deactivate")
+    suspend fun deactivateAccount(
+        @Path("nic") nic: String
+    ): Response<ApiResponse<Any>>
+
 }
 
 data class UpdateBookingRequest(

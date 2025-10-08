@@ -14,6 +14,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
+import androidx.compose.ui.unit.size
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -25,6 +26,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.evcharging.network.NetworkClient
 import com.example.evcharging.network.StationView
+import com.example.evcharging.repository.UserRepository
 import com.example.evcharging.session.UserSession
 import com.example.evcharging.ui.theme.EvChargingTheme
 import com.google.android.gms.maps.model.BitmapDescriptor
@@ -32,6 +34,7 @@ import com.google.android.gms.maps.model.BitmapDescriptorFactory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import androidx.compose.runtime.rememberCoroutineScope
 import retrofit2.awaitResponse
 
 import com.google.android.gms.maps.model.LatLng
@@ -57,10 +60,14 @@ class EVOwnerDashboardActivity : ComponentActivity() {
                     onMyBookingsClick = { 
                         startActivity(Intent(this, ViewBookingsActivity::class.java))
                     },
-                        onLogoutClick = {
-                            startActivity(Intent(this, SplashActivity::class.java))
-                            finish()
-                        }
+                    onDeactivateAccountClick = {
+                        // This will be handled by the confirmation dialog in the composable
+                    },
+                    onLogoutClick = {
+                        UserSession.logout()
+                        startActivity(Intent(this, SplashActivity::class.java))
+                        finish()
+                    }
                 )
             }
         }
@@ -71,7 +78,8 @@ class EVOwnerDashboardActivity : ComponentActivity() {
 fun EVOwnerDashboardScreen(
     onMakeReservationClick: () -> Unit,
     onMyBookingsClick: () -> Unit,
-    onLogoutClick: () -> Unit
+    onLogoutClick: () -> Unit,
+    onDeactivateAccountClick: () -> Unit
 ) {
     // Sample data - in real app, this would come from a data source
     // ---- state ----
@@ -79,6 +87,12 @@ fun EVOwnerDashboardScreen(
     var approvedReservations by remember { mutableStateOf(0) }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf<String?>(null) }
+    
+    // Deactivate account state
+    var showDeactivateDialog by remember { mutableStateOf(false) }
+    var isDeactivating by remember { mutableStateOf(false) }
+    var deactivateMessage by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
 
 
     var stations by remember { mutableStateOf<List<StationView>>(emptyList()) }
@@ -257,6 +271,18 @@ fun EVOwnerDashboardScreen(
             )
         }
         
+        // Deactivate Account Button
+        TextButton(
+            onClick = { showDeactivateDialog = true },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(
+                text = "Deactivate Account",
+                color = Color(0xFFF44336), // Red color for deactivation
+                fontSize = 14.sp
+            )
+        }
+        
         // Logout Button
         TextButton(
             onClick = onLogoutClick,
@@ -265,6 +291,145 @@ fun EVOwnerDashboardScreen(
             Text(
                 text = "Logout",
                 color = Color.Gray,
+                fontSize = 14.sp
+            )
+        }
+    }
+    
+    // Deactivate Account Confirmation Dialog
+    if (showDeactivateDialog) {
+        AlertDialog(
+            onDismissRequest = { 
+                if (!isDeactivating) {
+                    showDeactivateDialog = false 
+                }
+            },
+            title = {
+                Text(
+                    text = "Deactivate Account",
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFFF44336)
+                )
+            },
+            text = {
+                Column {
+                    Text(
+                        text = "Are you sure you want to deactivate your account?",
+                        fontSize = 16.sp,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                    Text(
+                        text = "This action will:",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.padding(bottom = 4.dp)
+                    )
+                    Text(
+                        text = "• Prevent you from making new reservations",
+                        fontSize = 14.sp,
+                        modifier = Modifier.padding(start = 8.dp, bottom = 2.dp)
+                    )
+                    Text(
+                        text = "• Cancel all pending bookings",
+                        fontSize = 14.sp,
+                        modifier = Modifier.padding(start = 8.dp, bottom = 2.dp)
+                    )
+                    Text(
+                        text = "• Require admin approval to reactivate",
+                        fontSize = 14.sp,
+                        modifier = Modifier.padding(start = 8.dp, bottom = 8.dp)
+                    )
+                    Text(
+                        text = "This action cannot be undone!",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFF44336)
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        scope.launch {
+                            isDeactivating = true
+                            val userInfo = UserSession.getUserInfo()
+                            if (userInfo != null) {
+                                val repository = UserRepository()
+                                val result = repository.deactivateAccount(userInfo.nic)
+                                if (result.isSuccess) {
+                                    deactivateMessage = "Account deactivated successfully"
+                                    // Logout and redirect to splash screen
+                                    UserSession.logout()
+                                    onLogoutClick()
+                                } else {
+                                    deactivateMessage = result.exceptionOrNull()?.message ?: "Failed to deactivate account"
+                                    isDeactivating = false
+                                }
+                            } else {
+                                deactivateMessage = "User session not found"
+                                isDeactivating = false
+                            }
+                        }
+                    },
+                    enabled = !isDeactivating,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFFF44336)
+                    )
+                ) {
+                    if (isDeactivating) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            color = Color.White,
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Text("Deactivate", color = Color.White)
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { 
+                        if (!isDeactivating) {
+                            showDeactivateDialog = false 
+                        }
+                    },
+                    enabled = !isDeactivating
+                ) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+    
+    // Show deactivation message if any
+    if (deactivateMessage != null) {
+        LaunchedEffect(deactivateMessage) {
+            kotlinx.coroutines.delay(3000)
+            deactivateMessage = null
+        }
+        
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = if (deactivateMessage!!.contains("success")) {
+                    Color(0xFFE8F5E8)
+                } else {
+                    Color(0xFFFFEBEE)
+                }
+            )
+        ) {
+            Text(
+                text = deactivateMessage!!,
+                color = if (deactivateMessage!!.contains("success")) {
+                    Color(0xFF2E7D32)
+                } else {
+                    Color(0xFFD32F2F)
+                },
+                modifier = Modifier.padding(16.dp),
                 fontSize = 14.sp
             )
         }

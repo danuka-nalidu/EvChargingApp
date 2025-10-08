@@ -276,4 +276,31 @@ class UserRepository {
             Result.failure(e)
         }
     }
+    
+    suspend fun deactivateAccount(nic: String): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            Log.d("UserRepository", "Deactivating account for NIC: $nic")
+            
+            val response = apiService.deactivateAccount(nic)
+            Log.d("UserRepository", "Deactivate account API response code: ${response.code()}")
+            Log.d("UserRepository", "Deactivate account API response body: ${response.body()}")
+            
+            if (response.isSuccessful) {
+                val result = response.body()
+                if (result != null) {
+                    Log.d("UserRepository", "Successfully deactivated account")
+                    Result.success("Account deactivated successfully")
+                } else {
+                    Log.w("UserRepository", "Deactivate account API returned null response")
+                    Result.success("Account deactivated successfully")
+                }
+            } else {
+                Log.e("UserRepository", "Deactivate account API error: ${response.code()} - ${response.message()}")
+                Result.failure(Exception("API error: ${response.code()} - ${response.message()}"))
+            }
+        } catch (e: Exception) {
+            Log.e("UserRepository", "Exception during account deactivation: ${e.message}", e)
+            Result.failure(e)
+        }
+    }
 }
