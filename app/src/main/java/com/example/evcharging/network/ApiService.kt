@@ -13,6 +13,12 @@ import retrofit2.http.Path
 import retrofit2.http.Query
 
 
+data class StationSchedule(
+    val dayOfWeek: Int,
+    val open: String,
+    val close: String
+)
+
 data class StationView(
     val id: String,
     val name: String,
@@ -21,7 +27,8 @@ data class StationView(
     val latitude: Double,
     val longitude: Double,
     val address: String,
-    val isActive: Boolean
+    val isActive: Boolean,
+    val schedule: List<StationSchedule>
 )
 
 data class CreateBookingRequest(
@@ -61,5 +68,19 @@ interface ApiService {
     suspend fun createBooking(
         @Body req: CreateBookingRequest
     ): Response<CreateBookingResponse>
+
+    @GET("api/stations/{id}")
+    suspend fun getStationById(
+        @Path("id") id: String
+    ): Response<StationView>
+
+    @GET("api/stations")
+    suspend fun getAllStations(): Response<List<StationView>>
+
+    @POST("api/bookings/{id}/cancel")
+    suspend fun cancelBooking(
+        @Path("id") id: String,
+        @Query("ownerNic") ownerNic: String
+    ): Response<ApiResponse<Any>>
 
 }

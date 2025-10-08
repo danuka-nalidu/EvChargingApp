@@ -12,7 +12,8 @@ object NetworkClient {
     // For emulator: use "http://10.0.2.2:5128/"
     // For physical device: use "http://YOUR_COMPUTER_IP:5128/"
     // Make sure your .NET backend CORS allows this origin
-    private const val BASE_URL = "http://192.168.1.2:8044/"
+//    private const val BASE_URL = "http://192.168.1.2:8044/"
+    private const val BASE_URL = "http://10.0.2.2:5128/"
     
     private val loggingInterceptor = HttpLoggingInterceptor().apply {
         level = HttpLoggingInterceptor.Level.BODY

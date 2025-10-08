@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.evcharging.network.CreateBookingRequest
 import com.example.evcharging.network.NetworkClient
+import com.example.evcharging.repository.UserRepository
 import com.example.evcharging.session.UserSession
 import com.example.evcharging.ui.theme.EvChargingTheme
 import kotlinx.coroutines.launch
@@ -87,16 +88,25 @@ fun NewReservationScreen(
     var error by remember { mutableStateOf<String?>(null) }
     var ok by remember { mutableStateOf<String?>(null) }
 
-    // Sample list (replace with live data if needed)
-    val stations = listOf(
-        "Station A - Colombo",
-        "Station B - Kandy",
-        "Station C - Galle",
-        "Station D - Negombo"
-    ).let { base ->
-        if (!initialStationName.isNullOrBlank() && base.none { it == initialStationName }) {
-            listOf(initialStationName) + base
-        } else base
+    // Fetch stations from API
+    var stations by remember { mutableStateOf<List<com.example.evcharging.network.StationView>>(emptyList()) }
+    var isLoadingStations by remember { mutableStateOf(true) }
+    var stationError by remember { mutableStateOf<String?>(null) }
+    
+    LaunchedEffect(Unit) {
+        val repository = UserRepository()
+        try {
+            val result = repository.getAllStations()
+            if (result.isSuccess) {
+                stations = result.getOrNull() ?: emptyList()
+                stationError = null
+            } else {
+                stationError = result.exceptionOrNull()?.message ?: "Failed to load stations"
+            }
+        } catch (e: Exception) {
+            stationError = "Error loading stations: ${e.message}"
+        }
+        isLoadingStations = false
     }
 
     // ---- Pickers ----
@@ -152,14 +162,43 @@ fun NewReservationScreen(
             modifier = Modifier.padding(bottom = 24.dp)
         )
 
+        // Error Message
         if (error != null) {
-            Text(error!!, color = Color(0xFFD32F2F), modifier = Modifier.padding(bottom = 8.dp))
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color(0xFFFFEBEE)
+                )
+            ) {
+                Text(
+                    text = error!!,
+                    color = Color(0xFFD32F2F),
+                    modifier = Modifier.padding(16.dp)
+                )
+            }
         }
+        
+        // Success Message
         if (ok != null) {
-            Text(ok!!, color = Color(0xFF2E7D32), modifier = Modifier.padding(bottom = 8.dp))
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color(0xFFE8F5E8)
+                )
+            ) {
+                Text(
+                    text = ok!!,
+                    color = Color(0xFF2E7D32),
+                    modifier = Modifier.padding(16.dp)
+                )
+            }
         }
 
-        // Station dropdown (still editable if you want; if you want to lock, make expanded=false)
+        // Station dropdown
         var expandedStation by remember { mutableStateOf(false) }
         ExposedDropdownMenuBox(
             expanded = expandedStation,
@@ -173,25 +212,44 @@ fun NewReservationScreen(
                 onValueChange = {},
                 readOnly = true,
                 label = { Text("Select Charging Station") },
-                placeholder = { Text("Choose a station") },
+                placeholder = { 
+                    when {
+                        isLoadingStations -> Text("Loading stations...")
+                        stationError != null -> Text("Error loading stations")
+                        else -> Text("Choose a station")
+                    }
+                },
                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expandedStation) },
                 modifier = Modifier
                     .menuAnchor()
-                    .fillMaxWidth()
+                    .fillMaxWidth(),
+                enabled = !isLoadingStations && stationError == null
             )
             ExposedDropdownMenu(
                 expanded = expandedStation,
                 onDismissRequest = { expandedStation = false }
             ) {
-                stations.forEach { station ->
+                if (isLoadingStations) {
                     DropdownMenuItem(
-                        text = { Text(station) },
-                        onClick = {
-                            selectedStation = station
-                            // NOTE: when you use a real list (id+name), set selectedStationId here.
-                            expandedStation = false
-                        }
+                        text = { Text("Loading stations...") },
+                        onClick = { }
                     )
+                } else if (stationError != null) {
+                    DropdownMenuItem(
+                        text = { Text("Error: $stationError") },
+                        onClick = { }
+                    )
+                } else {
+                    stations.forEach { station ->
+                        DropdownMenuItem(
+                            text = { Text("${station.name} (${station.type}) - ${station.address}") },
+                            onClick = {
+                                selectedStation = station.name
+                                selectedStationId = station.id
+                                expandedStation = false
+                            }
+                        )
+                    }
                 }
             }
         }
@@ -319,7 +377,7 @@ fun NewReservationScreen(
                         )
                         if (resp.isSuccessful) {
                             val id = resp.body()?.id ?: "(unknown)"
-                            ok = "Reservation created (#$id)."
+                            ok = "Reservation created"
                             Toast.makeText(context, "Reservation created", Toast.LENGTH_SHORT).show()
                             onConfirmClick() // let Activity navigate if desired
                         } else {

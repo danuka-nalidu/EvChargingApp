@@ -163,4 +163,85 @@ class UserRepository {
             Result.failure(e)
         }
     }
+    
+    suspend fun getStationById(stationId: String): Result<com.example.evcharging.network.StationView> = withContext(Dispatchers.IO) {
+        try {
+            Log.d("UserRepository", "Fetching station details for ID: $stationId")
+            
+            val response = apiService.getStationById(stationId)
+            Log.d("UserRepository", "Station API response code: ${response.code()}")
+            Log.d("UserRepository", "Station API response body: ${response.body()}")
+            
+            if (response.isSuccessful) {
+                val station = response.body()
+                if (station != null) {
+                    Log.d("UserRepository", "Successfully fetched station: ${station.name}")
+                    Result.success(station)
+                } else {
+                    Log.w("UserRepository", "Station API returned null response")
+                    Result.failure(Exception("Station not found"))
+                }
+            } else {
+                Log.e("UserRepository", "Station API error: ${response.code()} - ${response.message()}")
+                Result.failure(Exception("API error: ${response.code()} - ${response.message()}"))
+            }
+        } catch (e: Exception) {
+            Log.e("UserRepository", "Exception during station fetch: ${e.message}", e)
+            Result.failure(e)
+        }
+    }
+    
+    suspend fun getAllStations(): Result<List<com.example.evcharging.network.StationView>> = withContext(Dispatchers.IO) {
+        try {
+            Log.d("UserRepository", "Fetching all stations")
+            
+            val response = apiService.getAllStations()
+            Log.d("UserRepository", "Stations API response code: ${response.code()}")
+            Log.d("UserRepository", "Stations API response body: ${response.body()}")
+            
+            if (response.isSuccessful) {
+                val stations = response.body()
+                if (stations != null) {
+                    Log.d("UserRepository", "Successfully fetched ${stations.size} stations")
+                    Result.success(stations)
+                } else {
+                    Log.w("UserRepository", "Stations API returned null response")
+                    Result.success(emptyList())
+                }
+            } else {
+                Log.e("UserRepository", "Stations API error: ${response.code()} - ${response.message()}")
+                Result.failure(Exception("API error: ${response.code()} - ${response.message()}"))
+            }
+        } catch (e: Exception) {
+            Log.e("UserRepository", "Exception during stations fetch: ${e.message}", e)
+            Result.failure(e)
+        }
+    }
+    
+    suspend fun cancelBooking(bookingId: String, ownerNic: String): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            Log.d("UserRepository", "Cancelling booking: $bookingId for owner: $ownerNic")
+            
+            val response = apiService.cancelBooking(bookingId, ownerNic)
+            Log.d("UserRepository", "Cancel booking API response code: ${response.code()}")
+            Log.d("UserRepository", "Cancel booking API response body: ${response.body()}")
+            
+            if (response.isSuccessful) {
+                val result = response.body()
+                if (result != null) {
+                    Log.d("UserRepository", "Successfully cancelled booking")
+                    Result.success("Booking cancelled successfully")
+                } else {
+                    Log.w("UserRepository", "Cancel booking API returned null response")
+                    Result.success("Booking cancelled successfully")
+                }
+            } else {
+                Log.e("UserRepository", "Cancel booking API error: ${response.code()} - ${response.message()}")
+                Result.failure(Exception("API error: ${response.code()} - ${response.message()}"))
+            }
+        } catch (e: Exception) {
+            Log.e("UserRepository", "Exception during booking cancellation: ${e.message}", e)
+            Result.failure(e)
+        }
+    }
 }
