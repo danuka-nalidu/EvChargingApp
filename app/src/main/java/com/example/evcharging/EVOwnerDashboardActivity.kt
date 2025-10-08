@@ -1,7 +1,10 @@
 package com.example.evcharging
 
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -15,16 +18,36 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.evcharging.network.NetworkClient
+import com.example.evcharging.network.StationView
+import com.example.evcharging.session.UserSession
 import com.example.evcharging.ui.theme.EvChargingTheme
+import com.google.android.gms.maps.model.BitmapDescriptor
+import com.google.android.gms.maps.model.BitmapDescriptorFactory
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import retrofit2.awaitResponse
+
+import com.google.android.gms.maps.model.LatLng
+import com.google.maps.android.compose.GoogleMap
+import com.google.maps.android.compose.Marker
+import com.google.maps.android.compose.MarkerState
+import com.google.maps.android.compose.rememberCameraPositionState
+import com.google.android.gms.maps.model.CameraPosition
 
 class EVOwnerDashboardActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        UserSession.initialize(this)
+
+
         setContent {
             EvChargingTheme {
                 EVOwnerDashboardScreen(
@@ -51,8 +74,60 @@ fun EVOwnerDashboardScreen(
     onLogoutClick: () -> Unit
 ) {
     // Sample data - in real app, this would come from a data source
-    val pendingReservations = 2
-    val approvedReservations = 3
+    // ---- state ----
+    var pendingReservations by remember { mutableStateOf(0) }
+    var approvedReservations by remember { mutableStateOf(0) }
+    var loading by remember { mutableStateOf(true) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+
+    var stations by remember { mutableStateOf<List<StationView>>(emptyList()) }
+    val defaultCenter = LatLng(7.2906, 80.6337) // Kandy (pick any default)
+    var center by remember { mutableStateOf(defaultCenter) }
+
+    LaunchedEffect(Unit) {
+        try {
+            val respStations = NetworkClient.apiService
+                .nearby(lat = center.latitude, lng = center.longitude, km = 10000.0, take = 50)
+            if (respStations.isSuccessful) {
+                stations = respStations.body().orEmpty()
+            } else {
+                Log.w("DASHBOARD", "Nearby stations failed: HTTP ${respStations.code()}")
+            }
+        } catch (e: Exception) {
+            Log.e("DASHBOARD", "Nearby stations error: ${e.message}", e)
+        }
+
+        try {
+            val nic = UserSession.getUserNIC()
+            Log.i("DASHBORADDDD","NICCCC $nic")
+            if (nic.isNullOrBlank()) {
+                error = "No active session. Please log in."
+                loading = false
+                return@LaunchedEffect
+            }
+
+            val resp = NetworkClient.bookings.listByOwner(nic).awaitResponse()
+
+            Log.i("BOOKINGS","DATA $resp")
+            if (resp.isSuccessful) {
+                val items = resp.body().orEmpty()
+                pendingReservations = items.count { it.status.equals("Pending", ignoreCase = true) }
+                approvedReservations = items.count { it.status.equals("Approved", ignoreCase = true) }
+            } else {
+                error = "Failed to load: HTTP ${resp.code()}"
+            }
+
+        }catch (e: Exception) {
+            error = e.message ?: "Unexpected error"
+        } finally {
+            loading = false
+        }
+
+    }
+
+
+
 
     Column(
         modifier = Modifier
@@ -139,48 +214,14 @@ fun EVOwnerDashboardScreen(
         }
         
         // Nearby Stations Map Placeholder
-        Card(
+        StationsMap(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(200.dp)
+                .height(450.dp)
                 .padding(bottom = 16.dp),
-            shape = RoundedCornerShape(8.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = Color(0xFFF5F5F5)
-            ),
-            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color(0xFFE0E0E0)),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        text = "🗺️",
-                        fontSize = 32.sp,
-                        modifier = Modifier.padding(bottom = 8.dp)
-                    )
-                    Text(
-                        text = "Nearby Stations Map",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = Color.Gray,
-                        textAlign = TextAlign.Center
-                    )
-                    Text(
-                        text = "(Google Maps integration coming soon)",
-                        fontSize = 12.sp,
-                        color = Color.Gray,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(top = 4.dp)
-                    )
-                }
-            }
-        }
+            center = center,
+            stations = stations
+        )
         
         // Make Reservation Button
         Button(
@@ -229,3 +270,84 @@ fun EVOwnerDashboardScreen(
         }
     }
 }
+@Composable
+private fun StationsMap(
+    modifier: Modifier = Modifier,
+    center: LatLng,
+    stations: List<StationView>
+) {
+    val context = LocalContext.current
+
+    val camera = rememberCameraPositionState {
+        position = CameraPosition.fromLatLngZoom(center, 13f)
+    }
+
+    // 1) Ensure Maps is initialized
+    LaunchedEffect(Unit) {
+        try {
+            com.google.android.gms.maps.MapsInitializer.initialize(context.applicationContext)
+        } catch (e: Exception) {
+            android.util.Log.e("MAPS", "MapsInitializer failed: ${e.message}", e)
+        }
+    }
+
+    // 2) Wait for map to be ready before creating BitmapDescriptors
+    var mapLoaded by remember { mutableStateOf(false) }
+
+    // Helper to load bitmap from drawable (MUST be a PNG/JPG, not a vector XML)
+    fun bitmapDescriptor(resId: Int, width: Int = 80, height: Int = 80): BitmapDescriptor? = try {
+        val original = BitmapFactory.decodeResource(context.resources, resId)
+        val scaled = Bitmap.createScaledBitmap(original, width, height, false)
+        BitmapDescriptorFactory.fromBitmap(scaled)
+    } catch (e: Exception) {
+        Log.e("MAPS", "Icon load failed: ${e.message}")
+        null
+    }
+
+    // Build icons only after the map is loaded
+    val acIcon: BitmapDescriptor? = remember(mapLoaded) {
+        if (mapLoaded) bitmapDescriptor(R.drawable.station, 80, 80) else null
+    }
+    val dcIcon: BitmapDescriptor? = remember(mapLoaded) {
+        if (mapLoaded) bitmapDescriptor(R.drawable.station, 80, 80) else null
+    }
+
+    Card(
+        modifier = modifier,
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFF5F5F5)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        GoogleMap(
+            modifier = Modifier.fillMaxSize(),
+            cameraPositionState = camera,
+            onMapLoaded = { mapLoaded = true }  // <- signal map is ready
+        ) {
+            val ctx = context
+            stations.forEach { s ->
+                Marker(
+                    state = MarkerState(LatLng(s.latitude, s.longitude)),
+                    title = s.name,
+                    snippet = "${s.type} • Slots: ${s.parallelSlots}",
+                    // If custom icon not ready yet, GoogleMap will use the default pin
+                    icon = when {
+                        s.type.equals("AC", true) -> acIcon
+                        else -> dcIcon
+                    },
+                    onClick = {
+                        val i = Intent(ctx, NewReservationActivity::class.java).apply {
+                            putExtra("stationId", s.id)
+                            putExtra("stationName", s.name)
+                            putExtra("stationType", s.type)
+                            putExtra("stationAddress", s.address)
+                        }
+                        ctx.startActivity(i)
+                        true // consume click (don’t auto-center)
+                    }
+
+                )
+            }
+        }
+    }
+}
+

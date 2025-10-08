@@ -10,7 +10,7 @@ class UserDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_
 
     companion object {
         private const val DATABASE_NAME = "ev_charging.db"
-        private const val DATABASE_VERSION = 2
+        private const val DATABASE_VERSION = 3
 
         // EV Owners Table
         private const val TABLE_EV_OWNERS = "ev_owners"
@@ -350,6 +350,43 @@ class UserDatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_
             put(COLUMN_UPDATED_AT, System.currentTimeMillis())
         }
         return db.update(TABLE_EV_OWNERS, values, "$COLUMN_NIC = ?", arrayOf(nic)) > 0
+    }
+
+    fun getEVOwnerByNic(nic: String): Map<String, String>? {
+        val db = readableDatabase
+        var ownerDetails: MutableMap<String, String>? = null
+
+        val cursor = db.query(
+            TABLE_EV_OWNERS,
+            arrayOf(
+                COLUMN_NIC,
+                COLUMN_FULL_NAME,
+                COLUMN_EMAIL,
+                COLUMN_PHONE,
+                COLUMN_IS_ACTIVE,
+                COLUMN_CREATED_AT,
+                COLUMN_UPDATED_AT
+            ),
+            "$COLUMN_NIC = ?",
+            arrayOf(nic),
+            null, null, null
+        )
+
+        if (cursor.moveToFirst()) {
+            ownerDetails = mutableMapOf(
+                "nic" to cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_NIC)),
+                "full_name" to cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_FULL_NAME)),
+                "email" to cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_EMAIL)),
+                "phone" to cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_PHONE)),
+                "is_active" to cursor.getInt(cursor.getColumnIndexOrThrow(COLUMN_IS_ACTIVE)).toString(),
+                "created_at" to cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_CREATED_AT)),
+                "updated_at" to cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_UPDATED_AT))
+            )
+        }
+
+        cursor.close()
+        db.close()
+        return ownerDetails
     }
 
     // Operator methods

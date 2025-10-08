@@ -9,9 +9,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -32,17 +29,14 @@ class ViewBookingsActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        
-        // Initialize user session
-        UserSession.initialize(this)
-        
+
         setContent {
             EvChargingTheme {
                 ViewBookingsScreen(
                     onBackClick = { finish() },
                     onQRCodeClick = { bookingId ->
                         val intent = Intent(this, QRCodeGenerationActivity::class.java).apply {
-                            putExtra("BOOKING_ID", bookingId)
+                            putExtra("BOOKING_QR", bookingId)
                         }
                         startActivity(intent)
                     }
@@ -58,7 +52,8 @@ data class Booking(
     val date: String,
     val time: String,
     val status: String,
-    val isUpcoming: Boolean
+    val isUpcoming: Boolean,
+    val qrToken: String?
 )
 
 @Composable
@@ -66,12 +61,13 @@ fun ViewBookingsScreen(
     onBackClick: () -> Unit,
     onQRCodeClick: (String) -> Unit
 ) {
+    // 0=All, 1=Approved, 2=Pending, 3=Completed, 4=Canceled, 5=Rejected
     var selectedTab by remember { mutableStateOf(0) }
     var bookings by remember { mutableStateOf<List<Booking>>(emptyList()) }
     var isLoading by remember { mutableStateOf(true) }
     var errorMessage by remember { mutableStateOf("") }
-    
-    // Fetch bookings from API
+
+    // Fetch bookings from API (keeps your existing repository flow)
     LaunchedEffect(Unit) {
         val userInfo = UserSession.getUserInfo()
         if (userInfo != null) {
@@ -88,7 +84,9 @@ fun ViewBookingsScreen(
                                 date = apiBooking.getFormattedDate(),
                                 time = apiBooking.getFormattedTime(),
                                 status = apiBooking.status,
-                                isUpcoming = apiBooking.isUpcoming()
+                                isUpcoming = apiBooking.isUpcoming(),
+                                qrToken = apiBooking.qrToken
+
                             )
                         }
                         errorMessage = ""
@@ -106,10 +104,24 @@ fun ViewBookingsScreen(
             isLoading = false
         }
     }
-    
-    // Separate upcoming and past bookings
-    val upcomingBookings = bookings.filter { it.isUpcoming }
-    val pastBookings = bookings.filter { !it.isUpcoming }
+
+    // Status-only groupings
+    val approved = remember(bookings) { bookings.filter { it.status.equals("Approved", true) } }
+    val pending = remember(bookings) { bookings.filter { it.status.equals("Pending", true) } }
+    val completed = remember(bookings) { bookings.filter { it.status.equals("Completed", true) } }
+    val canceled = remember(bookings) {
+        bookings.filter { it.status.equals("Canceled", true) || it.status.equals("Cancelled", true) }
+    }
+    val rejected = remember(bookings) { bookings.filter { it.status.equals("Rejected", true) } }
+
+    val tabs = listOf(
+        "All (${bookings.size})",
+        "Approved (${approved.size})",
+        "Pending (${pending.size})",
+        "Completed (${completed.size})",
+        "Canceled (${canceled.size})",
+        "Rejected (${rejected.size})"
+    )
 
     Column(
         modifier = Modifier
@@ -117,7 +129,7 @@ fun ViewBookingsScreen(
             .padding(16.dp)
     ) {
         Spacer(modifier = Modifier.height(16.dp))
-        
+
         // Title
         Text(
             text = "My Bookings",
@@ -129,44 +141,34 @@ fun ViewBookingsScreen(
                 .padding(bottom = 16.dp),
             textAlign = TextAlign.Center
         )
-        
-        // Tab Row
-        TabRow(
+
+        // Tabs by status only
+        ScrollableTabRow(
             selectedTabIndex = selectedTab,
-            modifier = Modifier.fillMaxWidth()
+            edgePadding = 0.dp
         ) {
-            Tab(
-                selected = selectedTab == 0,
-                onClick = { selectedTab = 0 },
-                text = { Text("Upcoming (${upcomingBookings.size})") }
-            )
-            Tab(
-                selected = selectedTab == 1,
-                onClick = { selectedTab = 1 },
-                text = { Text("Past (${pastBookings.size})") }
-            )
+            tabs.forEachIndexed { index, label ->
+                Tab(
+                    selected = selectedTab == index,
+                    onClick = { selectedTab = index },
+                    text = { Text(label) }
+                )
+            }
         }
-        
+
         Spacer(modifier = Modifier.height(16.dp))
-        
-        // Content based on selected tab
+
+        // Content based on selected status tab
         when {
             isLoading -> {
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        CircularProgressIndicator(
-                            color = Color(0xFF4CAF50)
-                        )
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        CircularProgressIndicator(color = Color(0xFF4CAF50))
                         Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            text = "Loading bookings...",
-                            color = Color.Gray
-                        )
+                        Text(text = "Loading bookings...", color = Color.Gray)
                     }
                 }
             }
@@ -175,52 +177,34 @@ fun ViewBookingsScreen(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(
-                            text = "⚠️",
-                            fontSize = 48.sp
-                        )
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(text = "⚠️", fontSize = 48.sp)
                         Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            text = errorMessage,
-                            color = Color.Red,
-                            textAlign = TextAlign.Center
-                        )
+                        Text(text = errorMessage, color = Color.Red, textAlign = TextAlign.Center)
                     }
                 }
             }
-            selectedTab == 0 -> {
-                if (upcomingBookings.isEmpty()) {
-                    EmptyStateMessage("No upcoming bookings")
+            else -> {
+                val list = when (selectedTab) {
+                    0 -> bookings
+                    1 -> approved
+                    2 -> pending
+                    3 -> completed
+                    4 -> canceled
+                    5 -> rejected
+                    else -> bookings
+                }
+                if (list.isEmpty()) {
+                    EmptyStateMessage("No bookings")
                 } else {
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        items(upcomingBookings) { booking ->
+                        items(list) { booking ->
                             BookingCard(
                                 booking = booking,
-                                showQRButton = booking.status == "APPROVED",
-                                onQRCodeClick = onQRCodeClick
-                            )
-                        }
-                    }
-                }
-            }
-            selectedTab == 1 -> {
-                if (pastBookings.isEmpty()) {
-                    EmptyStateMessage("No past bookings")
-                } else {
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        items(pastBookings) { booking ->
-                            BookingCard(
-                                booking = booking,
-                                showQRButton = false,
+                                showQRButton = booking.status.equals("Approved", true),
                                 onQRCodeClick = onQRCodeClick
                             )
                         }
@@ -228,9 +212,9 @@ fun ViewBookingsScreen(
                 }
             }
         }
-        
+
         Spacer(modifier = Modifier.height(16.dp))
-        
+
         // Back Button
         TextButton(
             onClick = onBackClick,
@@ -253,10 +237,8 @@ fun BookingCard(
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(8.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = Color(0xFFF5F5F5)
-        ),
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFF5F5F5)),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column(
@@ -277,29 +259,18 @@ fun BookingCard(
                 )
                 StatusChip(status = booking.status)
             }
-            
+
             Spacer(modifier = Modifier.height(8.dp))
-            
-            Text(
-                text = "Date: ${booking.date}",
-                fontSize = 14.sp,
-                color = Color.Gray
-            )
-            
-            Text(
-                text = "Time: ${booking.time}",
-                fontSize = 14.sp,
-                color = Color.Gray
-            )
-            
+
+            Text(text = "Date: ${booking.date}", fontSize = 14.sp, color = Color.Gray)
+            Text(text = "Time: ${booking.time}", fontSize = 14.sp, color = Color.Gray)
+
             if (showQRButton) {
                 Spacer(modifier = Modifier.height(12.dp))
                 Button(
-                    onClick = { onQRCodeClick(booking.id) },
+                    onClick = { booking.qrToken?.let { onQRCodeClick(it) } },
                     modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF4CAF50)
-                    )
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50))
                 ) {
                     Text(
                         text = "Generate QR Code",
@@ -314,19 +285,20 @@ fun BookingCard(
 
 @Composable
 fun StatusChip(status: String) {
-    val (backgroundColor, textColor) = when (status) {
-        "Approved" -> Color(0xFF4CAF50) to Color.White
-        "Pending" -> Color(0xFFFF9800) to Color.White
-        "Completed" -> Color(0xFF2196F3) to Color.White
-        "Cancelled" -> Color(0xFFF44336) to Color.White
+    val (backgroundColor, textColor) = when {
+        status.equals("Approved", true) -> Color(0xFF4CAF50) to Color.White
+        status.equals("Pending", true) -> Color(0xFFFF9800) to Color.White
+        status.equals("Completed", true) -> Color(0xFF2196F3) to Color.White
+        status.equals("Canceled", true) || status.equals("Cancelled", true) -> Color(0xFFF44336) to Color.White
+        status.equals("Rejected", true) -> Color(0xFF9E9E9E) to Color.White
         else -> Color.Gray to Color.White
     }
-    
+
     Box(
         modifier = Modifier
             .background(
                 color = backgroundColor,
-                shape = RoundedCornerShape(12.dp)
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp)
             )
             .padding(horizontal = 8.dp, vertical = 4.dp)
     ) {

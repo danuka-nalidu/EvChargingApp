@@ -4,6 +4,7 @@ import com.example.evcharging.network.models.ApiResponse
 import com.example.evcharging.network.models.BookingResponse
 import com.example.evcharging.network.models.RegistrationRequest
 import com.example.evcharging.network.models.RegistrationResponse
+import retrofit2.Call
 import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.GET
@@ -11,6 +12,28 @@ import retrofit2.http.POST
 import retrofit2.http.Path
 import retrofit2.http.Query
 
+
+data class StationView(
+    val id: String,
+    val name: String,
+    val type: String,
+    val parallelSlots: Int,
+    val latitude: Double,
+    val longitude: Double,
+    val address: String,
+    val isActive: Boolean
+)
+
+data class CreateBookingRequest(
+    val ownerNic: String,
+    val stationId: String,
+    val startUtc: String,
+    val endUtc: String
+)
+
+data class CreateBookingResponse(
+    val id: String
+)
 interface ApiService {
     
     @POST("api/owners/register")
@@ -24,4 +47,19 @@ interface ApiService {
         @Query("skip") skip: Int = 0,
         @Query("take") take: Int = 50
     ): Response<List<BookingResponse>>
+
+
+    @GET("api/stations/nearby")
+    suspend fun nearby(                         // <-- keep suspend
+        @Query("lat") lat: Double,
+        @Query("lng") lng: Double,
+        @Query("km") km: Double = 5.0,
+        @Query("take") take: Int = 50
+    ): Response<List<StationView>>
+
+    @POST("api/bookings")
+    suspend fun createBooking(
+        @Body req: CreateBookingRequest
+    ): Response<CreateBookingResponse>
+
 }

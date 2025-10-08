@@ -2,8 +2,9 @@ package com.example.evcharging
 
 import android.app.DatePickerDialog
 import android.app.TimePickerDialog
-import android.content.Intent
 import android.os.Bundle
+import android.util.Log
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -19,19 +20,41 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.evcharging.network.CreateBookingRequest
+import com.example.evcharging.network.NetworkClient
+import com.example.evcharging.session.UserSession
 import com.example.evcharging.ui.theme.EvChargingTheme
-import java.util.*
+import kotlinx.coroutines.launch
+import java.time.LocalDateTime
+import java.time.ZoneId
+import java.time.ZoneOffset
+import java.util.Calendar
 
 class NewReservationActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        val stationId   = intent.getStringExtra("stationId")
+        val stationName = intent.getStringExtra("stationName")
+        val stationType = intent.getStringExtra("stationType")
+        val stationAddr = intent.getStringExtra("stationAddress")
+
+        Log.i("NEW_RESERVATION", "stationId: $stationId")
+        Log.i("NEW_RESERVATION", "stationName: $stationName")
+        Log.i("NEW_RESERVATION", "stationType: $stationType")
+        Log.i("NEW_RESERVATION", "stationAddr: $stationAddr")
+
         setContent {
             EvChargingTheme {
                 NewReservationScreen(
+                    initialStationId = stationId,
+                    initialStationName = stationName,
+                    initialStationType = stationType,
+                    initialStationAddress = stationAddr,
                     onBackClick = { finish() },
-                    onPreviewSummaryClick = { /* Handle preview */ },
-                    onConfirmClick = { /* Handle confirmation */ }
+                    onPreviewSummaryClick = { /* optional preview */ },
+                    onConfirmClick = { /* after success you can navigate if you like */ }
                 )
             }
         }
@@ -41,45 +64,77 @@ class NewReservationActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NewReservationScreen(
+    initialStationId: String? = null,
+    initialStationName: String? = null,
+    initialStationType: String? = null,
+    initialStationAddress: String? = null,
     onBackClick: () -> Unit,
     onPreviewSummaryClick: () -> Unit,
     onConfirmClick: () -> Unit
 ) {
     val context = LocalContext.current
-    
-    // State variables
-    var selectedStation by remember { mutableStateOf("") }
-    var selectedSlot by remember { mutableStateOf("") }
-    var selectedDate by remember { mutableStateOf("") }
-    var selectedTime by remember { mutableStateOf("") }
-    
-    // Sample data - in real app, this would come from web service
-    val stations = listOf("Station A - Colombo", "Station B - Kandy", "Station C - Galle", "Station D - Negombo")
-    val timeSlots = listOf("08:00 - 10:00", "10:00 - 12:00", "12:00 - 14:00", "14:00 - 16:00", "16:00 - 18:00", "18:00 - 20:00")
-    
-    // Date picker
+    val scope = rememberCoroutineScope()
+
+    // ---- State ----
+    var selectedStationId by remember { mutableStateOf(initialStationId ?: "") }
+    var selectedStation by remember { mutableStateOf(initialStationName ?: "") }
+
+    var selectedDate by remember { mutableStateOf("") }          // dd/MM/yyyy
+    var selectedStartTime by remember { mutableStateOf("") }     // HH:mm
+    var selectedEndTime by remember { mutableStateOf("") }       // HH:mm
+
+    var submitting by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var ok by remember { mutableStateOf<String?>(null) }
+
+    // Sample list (replace with live data if needed)
+    val stations = listOf(
+        "Station A - Colombo",
+        "Station B - Kandy",
+        "Station C - Galle",
+        "Station D - Negombo"
+    ).let { base ->
+        if (!initialStationName.isNullOrBlank() && base.none { it == initialStationName }) {
+            listOf(initialStationName) + base
+        } else base
+    }
+
+    // ---- Pickers ----
     val calendar = Calendar.getInstance()
+
     val datePickerDialog = DatePickerDialog(
         context,
         { _, year, month, dayOfMonth ->
-            selectedDate = "$dayOfMonth/${month + 1}/$year"
+            val dd = "%02d".format(dayOfMonth)
+            val mm = "%02d".format(month + 1)
+            selectedDate = "$dd/$mm/$year"
         },
         calendar.get(Calendar.YEAR),
         calendar.get(Calendar.MONTH),
         calendar.get(Calendar.DAY_OF_MONTH)
     )
-    
-    // Time picker
-    val timePickerDialog = TimePickerDialog(
+
+    val startTimePickerDialog = TimePickerDialog(
         context,
         { _, hourOfDay, minute ->
-            selectedTime = String.format("%02d:%02d", hourOfDay, minute)
+            selectedStartTime = "%02d:%02d".format(hourOfDay, minute)
         },
         calendar.get(Calendar.HOUR_OF_DAY),
         calendar.get(Calendar.MINUTE),
         true
     )
 
+    val endTimePickerDialog = TimePickerDialog(
+        context,
+        { _, hourOfDay, minute ->
+            selectedEndTime = "%02d:%02d".format(hourOfDay, minute)
+        },
+        calendar.get(Calendar.HOUR_OF_DAY),
+        calendar.get(Calendar.MINUTE),
+        true
+    )
+
+    // ---- UI ----
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -88,17 +143,23 @@ fun NewReservationScreen(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Spacer(modifier = Modifier.height(16.dp))
-        
-        // Title
+
         Text(
             text = "New Reservation",
             fontSize = 24.sp,
             fontWeight = FontWeight.Bold,
             color = Color.Black,
-            modifier = Modifier.padding(bottom = 32.dp)
+            modifier = Modifier.padding(bottom = 24.dp)
         )
-        
-        // Station Selection Dropdown
+
+        if (error != null) {
+            Text(error!!, color = Color(0xFFD32F2F), modifier = Modifier.padding(bottom = 8.dp))
+        }
+        if (ok != null) {
+            Text(ok!!, color = Color(0xFF2E7D32), modifier = Modifier.padding(bottom = 8.dp))
+        }
+
+        // Station dropdown (still editable if you want; if you want to lock, make expanded=false)
         var expandedStation by remember { mutableStateOf(false) }
         ExposedDropdownMenuBox(
             expanded = expandedStation,
@@ -127,50 +188,15 @@ fun NewReservationScreen(
                         text = { Text(station) },
                         onClick = {
                             selectedStation = station
+                            // NOTE: when you use a real list (id+name), set selectedStationId here.
                             expandedStation = false
                         }
                     )
                 }
             }
         }
-        
-        // Time Slot Selection Dropdown
-        var expandedSlot by remember { mutableStateOf(false) }
-        ExposedDropdownMenuBox(
-            expanded = expandedSlot,
-            onExpandedChange = { expandedSlot = !expandedSlot },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 8.dp)
-        ) {
-            OutlinedTextField(
-                value = selectedSlot,
-                onValueChange = {},
-                readOnly = true,
-                label = { Text("Select Time Slot") },
-                placeholder = { Text("Choose a time slot") },
-                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expandedSlot) },
-                modifier = Modifier
-                    .menuAnchor()
-                    .fillMaxWidth()
-            )
-            ExposedDropdownMenu(
-                expanded = expandedSlot,
-                onDismissRequest = { expandedSlot = false }
-            ) {
-                timeSlots.forEach { slot ->
-                    DropdownMenuItem(
-                        text = { Text(slot) },
-                        onClick = {
-                            selectedSlot = slot
-                            expandedSlot = false
-                        }
-                    )
-                }
-            }
-        }
-        
-        // Date Selection
+
+        // Date
         OutlinedTextField(
             value = selectedDate,
             onValueChange = {},
@@ -186,68 +212,146 @@ fun NewReservationScreen(
                 }
             }
         )
-        
-        // Time Selection
+
+        // Start time
         OutlinedTextField(
-            value = selectedTime,
+            value = selectedStartTime,
             onValueChange = {},
             readOnly = true,
-            label = { Text("Reservation Time") },
-            placeholder = { Text("Select time") },
+            label = { Text("Start Time") },
+            placeholder = { Text("Select start time") },
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(bottom = 16.dp),
+                .padding(bottom = 8.dp),
             trailingIcon = {
-                TextButton(onClick = { timePickerDialog.show() }) {
+                TextButton(onClick = { startTimePickerDialog.show() }) {
                     Text("Select", color = Color(0xFF4CAF50))
                 }
             }
         )
-        
-        // Preview Summary Button
+
+        // End time
+        OutlinedTextField(
+            value = selectedEndTime,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text("End Time") },
+            placeholder = { Text("Select end time") },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 16.dp),
+            trailingIcon = {
+                TextButton(onClick = { endTimePickerDialog.show() }) {
+                    Text("Select", color = Color(0xFF4CAF50))
+                }
+            }
+        )
+
+        // Preview (optional)
         Button(
             onClick = onPreviewSummaryClick,
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(bottom = 8.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = Color(0xFF4CAF50) // Green color
-            )
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50)),
+            enabled = !submitting
         ) {
-            Text(
-                text = "Preview Summary",
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Medium
-            )
+            Text("Preview Summary", fontSize = 16.sp, fontWeight = FontWeight.Medium)
         }
-        
-        // Confirm Button
+
+        // Confirm → CALL BACKEND
         Button(
-            onClick = onConfirmClick,
+            onClick = {
+                error = null; ok = null
+
+                val nic = UserSession.getUserNIC()
+                if (nic.isNullOrBlank()) {
+                    error = "No active session. Please log in again."
+                    return@Button
+                }
+                if (selectedStationId.isBlank()) {
+                    error = "Please select a station from the map."
+                    return@Button
+                }
+                if (selectedDate.isBlank()) {
+                    error = "Please select a reservation date."
+                    return@Button
+                }
+                if (selectedStartTime.isBlank()) {
+                    error = "Please select a start time."
+                    return@Button
+                }
+                if (selectedEndTime.isBlank()) {
+                    error = "Please select an end time."
+                    return@Button
+                }
+
+                // Build LocalDateTime from dd/MM/yyyy + HH:mm
+                fun parseLocal(date: String, time: String): LocalDateTime {
+                    val (d, m, y) = date.split("/").map { it.toInt() }
+                    val (hh, mm) = time.split(":").map { it.toInt() }
+                    return LocalDateTime.of(y, m, d, hh, mm)
+                }
+                val startLocal = parseLocal(selectedDate, selectedStartTime)
+                val endLocal = parseLocal(selectedDate, selectedEndTime)
+                if (!endLocal.isAfter(startLocal)) {
+                    error = "End time must be after start time."
+                    return@Button
+                }
+
+                // Convert to ISO-8601 UTC strings expected by backend
+                fun toIsoUtc(ldt: LocalDateTime): String =
+                    ldt.atZone(ZoneId.systemDefault()).withZoneSameInstant(ZoneOffset.UTC).toInstant().toString()
+
+                val startUtc = toIsoUtc(startLocal)
+                val endUtc = toIsoUtc(endLocal)
+
+                submitting = true
+                scope.launch {
+                    try {
+                        val resp = NetworkClient.apiService.createBooking(
+                            CreateBookingRequest(
+                                ownerNic = nic,
+                                stationId = selectedStationId,
+                                startUtc = startUtc,
+                                endUtc = endUtc
+                            )
+                        )
+                        if (resp.isSuccessful) {
+                            val id = resp.body()?.id ?: "(unknown)"
+                            ok = "Reservation created (#$id)."
+                            Toast.makeText(context, "Reservation created", Toast.LENGTH_SHORT).show()
+                            onConfirmClick() // let Activity navigate if desired
+                        } else {
+                            val msg = resp.errorBody()?.string()?.takeIf { it.isNotBlank() }
+                            error = msg ?: "Failed to create reservation (HTTP ${resp.code()})."
+                        }
+                    } catch (e: Exception) {
+                        error = "Network error: ${e.message}"
+                    } finally {
+                        submitting = false
+                    }
+                }
+            },
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(bottom = 16.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = Color(0xFF2196F3) // Blue color
-            )
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2196F3)),
+            enabled = !submitting
         ) {
             Text(
-                text = "Confirm Reservation",
+                text = if (submitting) "Confirming..." else "Confirm Reservation",
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Medium
             )
         }
-        
-        // Back Button
+
+        // Back
         TextButton(
             onClick = onBackClick,
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text(
-                text = "Back to Dashboard",
-                color = Color.Gray,
-                fontSize = 14.sp
-            )
+            Text("Back to Dashboard", color = Color.Gray, fontSize = 14.sp)
         }
     }
 }

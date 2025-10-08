@@ -1,10 +1,12 @@
 package com.example.evcharging
 
 import android.content.Intent
+import android.graphics.Bitmap
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -15,12 +17,17 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.evcharging.ui.theme.EvChargingTheme
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.EncodeHintType
+import com.google.zxing.qrcode.QRCodeWriter
+import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
 
 class QRCodeGenerationActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -28,7 +35,7 @@ class QRCodeGenerationActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             EvChargingTheme {
-                val bookingId = intent.getStringExtra("BOOKING_ID") ?: "RES001"
+                val bookingId = intent.getStringExtra("BOOKING_QR") ?: "RES001"
                 QRCodeGenerationScreen(
                     bookingId = bookingId,
                     onBackClick = { finish() }
@@ -43,6 +50,8 @@ fun QRCodeGenerationScreen(
     bookingId: String,
     onBackClick: () -> Unit
 ) {
+
+    val qrBitmap by remember(bookingId) { mutableStateOf(generateQrBitmap(bookingId, 720)) }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -51,7 +60,7 @@ fun QRCodeGenerationScreen(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Spacer(modifier = Modifier.height(16.dp))
-        
+
         // Title
         Text(
             text = "QR Code",
@@ -60,16 +69,14 @@ fun QRCodeGenerationScreen(
             color = Color.Black,
             modifier = Modifier.padding(bottom = 32.dp)
         )
-        
+
         // QR Code Placeholder
         Card(
             modifier = Modifier
-                .size(250.dp)
+                .size(260.dp)
                 .padding(bottom = 24.dp),
             shape = RoundedCornerShape(8.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = Color.White
-            ),
+            colors = CardDefaults.cardColors(containerColor = Color.White),
             elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
         ) {
             Box(
@@ -78,32 +85,17 @@ fun QRCodeGenerationScreen(
                     .background(Color.White),
                 contentAlignment = Alignment.Center
             ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        text = "📱",
-                        fontSize = 64.sp,
-                        modifier = Modifier.padding(bottom = 16.dp)
+                if (qrBitmap != null) {
+                    Image(
+                        bitmap = qrBitmap!!.asImageBitmap(),
+                        contentDescription = "Booking QR"
                     )
-                    Text(
-                        text = "QR Code",
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.Black,
-                        textAlign = TextAlign.Center
-                    )
-                    Text(
-                        text = "Placeholder",
-                        fontSize = 14.sp,
-                        color = Color.Gray,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.padding(top = 4.dp)
-                    )
+                } else {
+                    Text("Failed to generate QR", color = Color.Red)
                 }
             }
         }
-        
+
         // Booking Details Card
         Card(
             modifier = Modifier
@@ -127,7 +119,7 @@ fun QRCodeGenerationScreen(
                     color = Color.Black,
                     modifier = Modifier.padding(bottom = 16.dp)
                 )
-                
+
                 BookingDetailRow("Booking ID", bookingId)
                 BookingDetailRow("Station", "Station A - Colombo")
                 BookingDetailRow("Date", "15/12/2024")
@@ -137,7 +129,7 @@ fun QRCodeGenerationScreen(
                 BookingDetailRow("NIC", "123456789V")
             }
         }
-        
+
         // Instructions Card
         Card(
             modifier = Modifier
@@ -169,7 +161,7 @@ fun QRCodeGenerationScreen(
                 )
             }
         }
-        
+
         // Back Button
         TextButton(
             onClick = onBackClick,
@@ -221,3 +213,18 @@ fun QRCodeGenerationScreenPreview() {
     }
 }
 
+/** Create a QR code bitmap from content using ZXing. */
+private fun generateQrBitmap(content: String, size: Int): Bitmap? = try {
+    val hints = mapOf(
+        EncodeHintType.MARGIN to 1,                       // small quiet zone
+        EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.M
+    )
+    val bitMatrix = QRCodeWriter().encode(content, BarcodeFormat.QR_CODE, size, size, hints)
+    val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+    for (x in 0 until size) {
+        for (y in 0 until size) {
+            bmp.setPixel(x, y, if (bitMatrix[x, y]) android.graphics.Color.BLACK else android.graphics.Color.WHITE)
+        }
+    }
+    bmp
+} catch (_: Exception) { null }

@@ -2,6 +2,7 @@ package com.example.evcharging
 
 import android.content.Intent
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -21,12 +22,15 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.evcharging.database.UserDatabaseHelper
+import com.example.evcharging.session.UserSession
 import com.example.evcharging.ui.theme.EvChargingTheme
 
 class EVOwnerLoginActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // Initialize user session
+        UserSession.initialize(this)
         setContent {
             EvChargingTheme {
                 EVOwnerLoginScreen(
@@ -37,6 +41,17 @@ class EVOwnerLoginActivity : ComponentActivity() {
                             
                             if (isAuthenticated) {
                                 // Login successful
+                                val owner = dbHelper.getEVOwnerByNic(nicOrEmail)
+                                if (owner != null) {
+                                    val nic = owner["nic"] ?: ""
+                                    val name = owner["full_name"] ?: ""
+                                    val email = owner["email"] ?: ""
+                                    Log.d("OwnerDetails", "NIC: $nic, Name: $name, Email: $email")
+                                    UserSession.login(nic,name,email)
+                                } else {
+                                    Log.d("OwnerDetails", "Owner not found")
+                                }
+
                                 callback(true, "Login successful! Welcome back.")
                                 // Navigate to dashboard after a short delay to show success message
                                 android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
