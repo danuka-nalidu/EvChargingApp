@@ -244,4 +244,36 @@ class UserRepository {
             Result.failure(e)
         }
     }
+    
+    suspend fun updateBooking(bookingId: String, startUtc: String, endUtc: String): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            Log.d("UserRepository", "Updating booking: $bookingId with start: $startUtc, end: $endUtc")
+            
+            val request = com.example.evcharging.network.UpdateBookingRequest(
+                startUtc = startUtc,
+                endUtc = endUtc
+            )
+            
+            val response = apiService.updateBooking(bookingId, request)
+            Log.d("UserRepository", "Update booking API response code: ${response.code()}")
+            Log.d("UserRepository", "Update booking API response body: ${response.body()}")
+            
+            if (response.isSuccessful) {
+                val result = response.body()
+                if (result != null) {
+                    Log.d("UserRepository", "Successfully updated booking")
+                    Result.success("Booking updated successfully")
+                } else {
+                    Log.w("UserRepository", "Update booking API returned null response")
+                    Result.success("Booking updated successfully")
+                }
+            } else {
+                Log.e("UserRepository", "Update booking API error: ${response.code()} - ${response.message()}")
+                Result.failure(Exception("API error: ${response.code()} - ${response.message()}"))
+            }
+        } catch (e: Exception) {
+            Log.e("UserRepository", "Exception during booking update: ${e.message}", e)
+            Result.failure(e)
+        }
+    }
 }

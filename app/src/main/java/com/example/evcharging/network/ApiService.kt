@@ -9,6 +9,7 @@ import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.POST
+import retrofit2.http.PUT
 import retrofit2.http.Path
 import retrofit2.http.Query
 
@@ -83,4 +84,15 @@ interface ApiService {
         @Query("ownerNic") ownerNic: String
     ): Response<ApiResponse<Any>>
 
+    @PUT("api/bookings/{id}")
+    suspend fun updateBooking(
+        @Path("id") id: String,
+        @Body request: UpdateBookingRequest
+    ): Response<ApiResponse<Any>>
+
 }
+
+data class UpdateBookingRequest(
+    val startUtc: String,
+    val endUtc: String
+)

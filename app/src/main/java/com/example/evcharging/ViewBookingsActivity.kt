@@ -13,10 +13,15 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import java.time.LocalDateTime
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
+import java.util.Calendar
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -72,54 +77,56 @@ fun ViewBookingsScreen(
     var errorMessage by remember { mutableStateOf("") }
     var selectedBooking by remember { mutableStateOf<Booking?>(null) }
     var showBookingDetail by remember { mutableStateOf(false) }
-
-    // Fetch bookings from API (keeps your existing repository flow)
-    LaunchedEffect(Unit) {
+    
+    // Helper function to refresh bookings with station names
+    suspend fun refreshBookings() {
         val userInfo = UserSession.getUserInfo()
         if (userInfo != null) {
             val repository = UserRepository()
-            CoroutineScope(Dispatchers.Main).launch {
-                try {
-                    val result = repository.getBookingsByOwner(userInfo.nic)
-                    if (result.isSuccess) {
-                        val apiBookings = result.getOrNull() ?: emptyList()
-                        
-                        // Fetch station names for each booking
-                        val bookingsWithStationNames = mutableListOf<Booking>()
-                        for (apiBooking in apiBookings) {
-                            val stationResult = repository.getStationById(apiBooking.stationId)
-                            val stationName = if (stationResult.isSuccess) {
-                                stationResult.getOrNull()?.name ?: "Station ${apiBooking.stationId}"
-                            } else {
-                                "Station ${apiBooking.stationId}"
-                            }
-                            
-                            bookingsWithStationNames.add(
-                                Booking(
-                                    id = apiBooking.id,
-                                    stationName = stationName,
-                                    date = apiBooking.getFormattedDate(),
-                                    time = apiBooking.getFormattedTime(),
-                                    status = apiBooking.status,
-                                    isUpcoming = apiBooking.isUpcoming(),
-                                    qrToken = apiBooking.qrToken
-                                )
-                            )
+            try {
+                val result = repository.getBookingsByOwner(userInfo.nic)
+                if (result.isSuccess) {
+                    val apiBookings = result.getOrNull() ?: emptyList()
+                    
+                    // Fetch station names for each booking
+                    val bookingsWithStationNames = mutableListOf<Booking>()
+                    for (apiBooking in apiBookings) {
+                        val stationResult = repository.getStationById(apiBooking.stationId)
+                        val stationName = if (stationResult.isSuccess) {
+                            stationResult.getOrNull()?.name ?: "Station ${apiBooking.stationId}"
+                        } else {
+                            "Station ${apiBooking.stationId}"
                         }
                         
-                        bookings = bookingsWithStationNames
-                        errorMessage = ""
-                    } else {
-                        val exception = result.exceptionOrNull()
-                        errorMessage = exception?.message ?: "Failed to load bookings"
+                        bookingsWithStationNames.add(
+                            Booking(
+                                id = apiBooking.id,
+                                stationName = stationName,
+                                date = apiBooking.getFormattedDate(),
+                                time = apiBooking.getFormattedTime(),
+                                status = apiBooking.status,
+                                isUpcoming = apiBooking.isUpcoming(),
+                                qrToken = apiBooking.qrToken
+                            )
+                        )
                     }
-                } catch (e: Exception) {
-                    errorMessage = "Error loading bookings: ${e.message}"
+                    
+                    bookings = bookingsWithStationNames
+                    errorMessage = ""
+                } else {
+                    val exception = result.exceptionOrNull()
+                    errorMessage = exception?.message ?: "Failed to load bookings"
                 }
-                isLoading = false
+            } catch (e: Exception) {
+                errorMessage = "Error loading bookings: ${e.message}"
             }
-        } else {
-            errorMessage = "User not logged in"
+        }
+    }
+
+    // Fetch bookings from API (keeps your existing repository flow)
+    LaunchedEffect(Unit) {
+        scope.launch {
+            refreshBookings()
             isLoading = false
         }
     }
@@ -267,23 +274,22 @@ fun ViewBookingsScreen(
                         val result = repository.cancelBooking(booking.id, userInfo.nic)
                         if (result.isSuccess) {
                             // Refresh bookings after successful cancellation
-                            val bookingsResult = repository.getBookingsByOwner(userInfo.nic)
-                            if (bookingsResult.isSuccess) {
-                                bookings = bookingsResult.getOrNull()?.map { apiBooking ->
-                                    Booking(
-                                        id = apiBooking.id,
-                                        stationName = "Loading...", // Will be updated by station fetch
-                                        date = apiBooking.getFormattedDate(),
-                                        time = apiBooking.getFormattedTime(),
-                                        status = apiBooking.status,
-                                        isUpcoming = apiBooking.isUpcoming(),
-                                        qrToken = apiBooking.qrToken
-                                    )
-                                } ?: emptyList()
-                            }
+                            refreshBookings()
                             showBookingDetail = false
                             selectedBooking = null
                         }
+                    }
+                }
+            },
+            onUpdateBooking = { booking, startUtc, endUtc ->
+                scope.launch {
+                    val repository = UserRepository()
+                    val result = repository.updateBooking(booking.id, startUtc, endUtc)
+                    if (result.isSuccess) {
+                        // Refresh bookings after successful update
+                        refreshBookings()
+                        showBookingDetail = false
+                        selectedBooking = null
                     }
                 }
             }
@@ -397,9 +403,11 @@ fun EmptyStateMessage(message: String) {
 fun BookingDetailDialog(
     booking: Booking,
     onDismiss: () -> Unit,
-    onCancelBooking: (Booking) -> Unit
+    onCancelBooking: (Booking) -> Unit,
+    onUpdateBooking: (Booking, String, String) -> Unit
 ) {
     var showCancelConfirmation by remember { mutableStateOf(false) }
+    var showUpdateDialog by remember { mutableStateOf(false) }
     
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -433,12 +441,22 @@ fun BookingDetailDialog(
             }
         },
         confirmButton = {
-            if (booking.status.equals("Pending", true) || booking.status.equals("Approved", true)) {
-                Button(
-                    onClick = { showCancelConfirmation = true },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF44336))
-                ) {
-                    Text("Cancel Booking")
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                if (booking.status.equals("Pending", true) || booking.status.equals("Approved", true)) {
+                    Button(
+                        onClick = { showUpdateDialog = true },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2196F3))
+                    ) {
+                        Text("Update")
+                    }
+                    Button(
+                        onClick = { showCancelConfirmation = true },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF44336))
+                    ) {
+                        Text("Cancel")
+                    }
                 }
             }
         },
@@ -484,6 +502,18 @@ fun BookingDetailDialog(
             }
         )
     }
+    
+    // Update Booking Dialog
+    if (showUpdateDialog) {
+        UpdateBookingDialog(
+            booking = booking,
+            onDismiss = { showUpdateDialog = false },
+            onUpdate = { startUtc, endUtc ->
+                onUpdateBooking(booking, startUtc, endUtc)
+                showUpdateDialog = false
+            }
+        )
+    }
 }
 
 @Composable
@@ -504,4 +534,115 @@ fun DetailRow(label: String, value: String) {
             color = Color.Black
         )
     }
+}
+
+@Composable
+fun UpdateBookingDialog(
+    booking: Booking,
+    onDismiss: () -> Unit,
+    onUpdate: (String, String) -> Unit
+) {
+    val calendar = Calendar.getInstance()
+    
+    // Parse current booking date and time
+    val currentDate = booking.date.split("/")
+    val currentTime = booking.time.split(" - ")
+    
+    var selectedDate by remember { 
+        mutableStateOf(
+            if (currentDate.size == 3) {
+                "${currentDate[2]}-${currentDate[1].padStart(2, '0')}-${currentDate[0].padStart(2, '0')}"
+            } else {
+                calendar.get(Calendar.YEAR).toString() + "-" + 
+                (calendar.get(Calendar.MONTH) + 1).toString().padStart(2, '0') + "-" + 
+                calendar.get(Calendar.DAY_OF_MONTH).toString().padStart(2, '0')
+            }
+        )
+    }
+    
+    var selectedStartTime by remember { 
+        mutableStateOf(
+            if (currentTime.isNotEmpty()) currentTime[0] else "09:00"
+        )
+    }
+    
+    var selectedEndTime by remember { 
+        mutableStateOf(
+            if (currentTime.size > 1) currentTime[1] else "11:00"
+        )
+    }
+    
+    // Simple text input for date instead of picker dialog
+    
+    // Simple text input for start time instead of picker dialog
+    
+    // Simple text input for end time instead of picker dialog
+    
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = "Update Booking",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = "Update the date and time for your booking:",
+                    fontSize = 14.sp,
+                    color = Color.Gray
+                )
+                
+                // Date Input
+                OutlinedTextField(
+                    value = selectedDate,
+                    onValueChange = { selectedDate = it },
+                    label = { Text("Date (YYYY-MM-DD)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("2024-01-15") }
+                )
+                
+                // Start Time Input
+                OutlinedTextField(
+                    value = selectedStartTime,
+                    onValueChange = { selectedStartTime = it },
+                    label = { Text("Start Time (HH:MM)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("09:00") }
+                )
+                
+                // End Time Input
+                OutlinedTextField(
+                    value = selectedEndTime,
+                    onValueChange = { selectedEndTime = it },
+                    label = { Text("End Time (HH:MM)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("11:00") }
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    // Convert to UTC format
+                    val startUtc = "${selectedDate}T${selectedStartTime}:00.000Z"
+                    val endUtc = "${selectedDate}T${selectedEndTime}:00.000Z"
+                    onUpdate(startUtc, endUtc)
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50))
+            ) {
+                Text("Update Booking")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
 }
