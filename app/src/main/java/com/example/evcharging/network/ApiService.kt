@@ -42,13 +42,37 @@ data class CreateBookingRequest(
 data class CreateBookingResponse(
     val id: String
 )
+//operator
+data class LoginRequest(
+    val email: String,
+    val password: String,
+    val deviceId: String = "android"
+)
+
+data class LoginResponse(
+    val accessToken: String,
+    val refreshToken: String?,
+    val user: LoginUserDto
+)
+
+data class LoginUserDto(
+    val id: String,
+    val fullName: String?,
+    val email: String?,
+    val role: String
+)
+
+data class StartByQrRequest(val qrToken: String)
+data class FinalizeBookingRequest(
+    val kWhDelivered: Double
+)
 interface ApiService {
-    
+
     @POST("api/owners/register")
     suspend fun registerEVOwner(
         @Body request: RegistrationRequest
     ): Response<ApiResponse<RegistrationResponse>>
-    
+
     @GET("api/bookings/owner/{nic}")
     suspend fun getBookingsByOwner(
         @Path("nic") nic: String,
@@ -69,6 +93,21 @@ interface ApiService {
     suspend fun createBooking(
         @Body req: CreateBookingRequest
     ): Response<CreateBookingResponse>
+    @POST("api/auth/login")
+    suspend fun login(@Body req: LoginRequest): Response<LoginResponse>
+
+    @POST("api/bookings/start-by-qr")
+    suspend fun startByQr(
+        @Body body: StartByQrRequest
+    ): Response<BookingView>
+
+    @POST("api/bookings/{id}/finalize")
+    suspend fun finalizeBooking(
+        @Path("id") id: String,
+        @Body body: FinalizeBookingRequest
+    ): retrofit2.Response<Unit> // or Response<Void>
+
+
 
     @GET("api/stations/{id}")
     suspend fun getStationById(
