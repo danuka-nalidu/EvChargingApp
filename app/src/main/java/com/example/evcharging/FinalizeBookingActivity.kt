@@ -1,6 +1,5 @@
 package com.example.evcharging
 
-import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -17,17 +16,25 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.evcharging.network.FinalizeBookingRequest
+import com.example.evcharging.network.NetworkClient
 import com.example.evcharging.ui.theme.EvChargingTheme
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class FinalizeBookingActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        val bookingId = intent.getStringExtra("BOOKING_ID") ?: ""
+
         setContent {
             EvChargingTheme {
                 FinalizeBookingScreen(
-                    onBackClick = { finish() },
-                    onFinalizeOperationClick = { /* Handle finalization */ }
+                    bookingId = bookingId,
+                    onBackClick = { finish() }
                 )
             }
         }
@@ -36,10 +43,13 @@ class FinalizeBookingActivity : ComponentActivity() {
 
 @Composable
 fun FinalizeBookingScreen(
-    onBackClick: () -> Unit,
-    onFinalizeOperationClick: () -> Unit
+    bookingId: String,
+    onBackClick: () -> Unit
 ) {
-    var isFinalized by remember { mutableStateOf(false) }
+    var kwhText by remember { mutableStateOf("") }
+    var isSubmitting by remember { mutableStateOf(false) }
+    var successMsg by remember { mutableStateOf<String?>(null) }
+    var errorMsg by remember { mutableStateOf<String?>(null) }
 
     Column(
         modifier = Modifier
@@ -49,131 +59,118 @@ fun FinalizeBookingScreen(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Spacer(modifier = Modifier.height(16.dp))
-        
-        // Title
+
         Text(
             text = "Finalize Booking",
             fontSize = 24.sp,
             fontWeight = FontWeight.Bold,
             color = Color.Black,
-            modifier = Modifier.padding(bottom = 32.dp)
+            modifier = Modifier.padding(bottom = 16.dp)
         )
-        
-        // Booking Details Card
+
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(bottom = 16.dp),
+                .padding(bottom = 12.dp),
             shape = RoundedCornerShape(8.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = Color(0xFFF5F5F5)
-            ),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFFF5F5F5)),
             elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp)
-            ) {
-                Text(
-                    text = "Booking Details",
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.Black,
-                    modifier = Modifier.padding(bottom = 16.dp)
-                )
-                
-                BookingDetailRow("Booking ID", "BK001")
-                BookingDetailRow("Customer", "John Doe")
-                BookingDetailRow("NIC", "123456789V")
-                BookingDetailRow("Station", "Station A - Colombo")
-                BookingDetailRow("Date", "15/12/2024")
-                BookingDetailRow("Time", "10:00 - 12:00")
-                BookingDetailRow("Status", "Confirmed")
-                BookingDetailRow("Start Time", "10:05 AM")
-                BookingDetailRow("End Time", "11:45 AM")
-                BookingDetailRow("Duration", "1h 40m")
-                BookingDetailRow("Energy Used", "45 kWh")
-                BookingDetailRow("Cost", "Rs. 1,350")
+            Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                Text("Booking Details", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
+                FinalizeDetailRow("Booking ID", bookingId.ifBlank { "N/A" })
             }
         }
-        
-        // Session Summary Card
-        Card(
+
+        OutlinedTextField(
+            value = kwhText,
+            onValueChange = { kwhText = it },
+            label = { Text("Energy Used (kWh)") },
+            placeholder = { Text("e.g., 42.5") },
+            singleLine = true,
+            enabled = !isSubmitting,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(bottom = 16.dp),
-            shape = RoundedCornerShape(8.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = Color(0xFFE3F2FD)
-            ),
-            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-        ) {
-            Column(
+                .padding(bottom = 12.dp)
+        )
+
+        if (!errorMsg.isNullOrBlank()) {
+            Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(16.dp)
+                    .padding(bottom = 8.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFFFFEBEE))
             ) {
                 Text(
-                    text = "Session Summary",
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.Black,
-                    modifier = Modifier.padding(bottom = 8.dp)
-                )
-                Text(
-                    text = "• Charging session completed successfully\n• Customer was present and verified\n• Payment processed\n• Station is ready for next customer",
-                    fontSize = 14.sp,
-                    color = Color(0xFF1976D2),
-                    lineHeight = 20.sp
+                    text = errorMsg!!,
+                    color = Color(0xFFD32F2F),
+                    modifier = Modifier.padding(12.dp)
                 )
             }
         }
-        
-        // Finalize Operation Button
+        if (!successMsg.isNullOrBlank()) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 8.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F5E8))
+            ) {
+                Text(
+                    text = successMsg!!,
+                    color = Color(0xFF2E7D32),
+                    modifier = Modifier.padding(12.dp)
+                )
+            }
+        }
+
         Button(
             onClick = {
-                onFinalizeOperationClick()
-                isFinalized = true
+                errorMsg = null
+                successMsg = null
+
+                if (bookingId.isBlank()) {
+                    errorMsg = "Missing booking id."
+                    return@Button
+                }
+                val kwh = kwhText.toDoubleOrNull()
+                if (kwh == null || kwh < 0) {
+                    errorMsg = "Please enter a valid kWh value (e.g., 45.0)."
+                    return@Button
+                }
+
+                isSubmitting = true
+                CoroutineScope(Dispatchers.Main).launch {
+                    try {
+                        val resp = NetworkClient.apiService.finalizeBooking(
+                            bookingId,
+                            FinalizeBookingRequest(kWhDelivered = kwh)
+                        )
+                        if (resp.isSuccessful) {
+                            successMsg = "✅ Session finalized successfully."
+                        } else {
+                            errorMsg = "Failed: HTTP ${resp.code()}"
+                        }
+                    } catch (e: Exception) {
+                        errorMsg = e.message ?: "Unexpected error"
+                    } finally {
+                        isSubmitting = false
+                    }
+                }
             },
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(bottom = 16.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = Color(0xFF4CAF50) // Green color
-            ),
-            enabled = !isFinalized
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50)),
+            enabled = !isSubmitting
         ) {
             Text(
-                text = if (isFinalized) "Operation Finalized" else "Finalize Operation",
+                text = if (isSubmitting) "Finalizing..." else "Finalize Operation",
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Medium
             )
         }
-        
-        // Success Message
-        if (isFinalized) {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 16.dp),
-                shape = RoundedCornerShape(8.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = Color(0xFFE8F5E8)
-                ),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-            ) {
-                Text(
-                    text = "✅ Operation finalized successfully!\n\nCharging session completed and recorded.",
-                    fontSize = 14.sp,
-                    color = Color(0xFF2E7D32),
-                    modifier = Modifier.padding(16.dp),
-                    lineHeight = 20.sp
-                )
-            }
-        }
-        
-        // Back Button
+
         TextButton(
             onClick = onBackClick,
             modifier = Modifier.fillMaxWidth()
@@ -187,3 +184,15 @@ fun FinalizeBookingScreen(
     }
 }
 
+@Composable
+private fun FinalizeDetailRow(label: String, value: String) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(label, fontSize = 14.sp, color = Color.Gray, fontWeight = FontWeight.Medium)
+        Text(value, fontSize = 14.sp, color = Color.Black, fontWeight = FontWeight.Medium)
+    }
+}

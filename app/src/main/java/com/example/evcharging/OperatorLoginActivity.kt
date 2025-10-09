@@ -2,6 +2,7 @@ package com.example.evcharging
 
 import android.content.Intent
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -20,37 +21,99 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.auth0.android.jwt.JWT
 import com.example.evcharging.database.UserDatabaseHelper
+import com.example.evcharging.network.LoginRequest
+import com.example.evcharging.network.NetworkClient
+import com.example.evcharging.session.OperatorSession
 import com.example.evcharging.ui.theme.EvChargingTheme
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class OperatorLoginActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        OperatorSession.initialize(this)
         setContent {
             EvChargingTheme {
                 OperatorLoginScreen(
                     onLoginClick = { operatorId, password, callback ->
-                        try {
-                            val dbHelper = UserDatabaseHelper(this)
-                            val isAuthenticated = dbHelper.authenticateOperator(operatorId, password)
-                            
-                            if (isAuthenticated) {
-                                // Login successful
-                                callback(true, "Login successful! Welcome back.")
-                                // Navigate to dashboard after a short delay to show success message
-                                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                                    startActivity(Intent(this, OperatorDashboardActivity::class.java))
-                                    finish()
-                                }, 1500)
-                            } else {
-                                // Login failed
-                                callback(false, "Login unsuccessful. Please check your credentials and try again.")
+                        Log.i("OPERATORLOGIN","DATA $operatorId $password")
+                        CoroutineScope(Dispatchers.Main).launch {
+
+                            try {
+                                val req = LoginRequest(
+                                    email = operatorId.trim(),
+                                    password=password,
+                                    deviceId = "android-operator"
+                                )
+
+                                val resp = NetworkClient.apiService.login(req)
+
+                                if (resp.isSuccessful){
+                                    val body = resp.body()
+                                    val accessToken = body!!.accessToken
+                                    val jwt = JWT(accessToken)
+                                    val role = jwt.getClaim("http://schemas.microsoft.com/ws/2008/06/identity/claims/role").asString()
+                                    val name = jwt.getClaim("http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name").asString()
+                                    val email = jwt.getClaim("http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress").asString()
+                                    val userId = jwt.subject     // "sub"
+
+                                    Log.i("OPERATORLOGIN","API RES $role $name $email $userId")
+                                    if (!role.equals("Operator", ignoreCase = true)) {
+                                        callback(false, "Access denied: this account has role $role. Use an Operator account.")
+                                        return@launch
+                                    }
+
+
+                                    OperatorSession.setAuth(
+                                        jwt = accessToken,
+                                        userId = userId ?: "",
+                                        fullName = name ?: "",
+                                        email = email ?: "",
+                                        role = role ?: ""
+                                    )
+
+                                    callback(true,"Login sucessfull! Welcome back.")
+
+                                    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                                        startActivity(Intent(this@OperatorLoginActivity, OperatorDashboardActivity::class.java))
+                                        finish()
+                                    }, 800)
+
+
+                                } else{
+                                    callback(false, "Login failed (HTTP ${resp.code()}). Check credentials.")
+
+                                }
+                            }catch (e: Exception) {
+                                callback(false, "Network error: ${e.message}")
                             }
-                        } catch (e: Exception) {
-                            // Handle any database errors
-                            callback(false, "Database error: ${e.message}")
+
                         }
+
+//                        try {
+//                            val dbHelper = UserDatabaseHelper(this)
+//                            val isAuthenticated = dbHelper.authenticateOperator(operatorId, password)
+//
+//                            if (isAuthenticated) {
+//                                // Login successful
+//                                callback(true, "Login successful! Welcome back.")
+//                                // Navigate to dashboard after a short delay to show success message
+//                                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+//                                    startActivity(Intent(this, OperatorDashboardActivity::class.java))
+//                                    finish()
+//                                }, 1500)
+//                            } else {
+//                                // Login failed
+//                                callback(false, "Login unsuccessful. Please check your credentials and try again.")
+//                            }
+//                        } catch (e: Exception) {
+//                            // Handle any database errors
+//                            callback(false, "Database error: ${e.message}")
+//                        }
                     },
                     onForgotPasswordClick = { /* Handle forgot password */ },
                     onBackClick = {
